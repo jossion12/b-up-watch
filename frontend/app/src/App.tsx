@@ -342,7 +342,7 @@ export default function App() {
           />
         }
       />
-      <Route path="/jobs" element={<Jobs />} />
+      <Route path="/jobs" element={<Jobs videos={videos} uploaders={uploaders} />} />
     </Routes>
   )
 }
