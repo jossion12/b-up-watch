@@ -1,0 +1,41 @@
+[project]
+name = "upwatch-backend"
+version = "0.1.0"
+description = "UP雷达 后端服务"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "httpx>=0.27",
+    "yt-dlp>=2024.5",
+]
+
+[project.optional-dependencies]
+asr = [
+    # 本地 Qwen3-ASR 推理依赖；可选，未配置 QWEN_ASR_MODEL_PATH 时不安装也无所谓
+    "qwen-asr>=0.0.6",
+    "torch>=2.0",
+    "transformers>=4.40",
+    "huggingface-hub>=0.34.0,<1.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "respx>=0.21",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
