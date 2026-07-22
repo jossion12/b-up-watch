@@ -37,11 +37,13 @@ class UploaderListOut(_Base):
 class UploaderCreateIn(_Base):
     bilibili_uid: str = Field(min_length=1, max_length=32)
     group_id: Optional[str] = None
+    category: Optional[str] = Field(None, max_length=64)
     notify_enabled: bool = True
 
 
 class UploaderUpdateIn(_Base):
     group_id: Optional[str] = None
+    category: Optional[str] = Field(None, max_length=64)
     notify_enabled: Optional[bool] = None
 
 

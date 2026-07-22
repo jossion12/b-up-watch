@@ -93,12 +93,17 @@ async def search_uploaders(
 @router.get("/uploaders", response_model=UploaderListOut)
 def list_uploaders(
     group_id: Optional[str] = None,
+    category: Optional[str] = None,
     keyword: Optional[str] = None,
     db: Session = Depends(get_db),
 ) -> UploaderListOut:
     stmt = select(Uploader).where(Uploader.user_id == DEFAULT_USER_ID)
     if group_id:
         stmt = stmt.where(Uploader.group_id == group_id)
+    if category:
+        categories = [s.strip() for s in category.split(",") if s.strip()]
+        if categories:
+            stmt = stmt.where(Uploader.category.in_(categories))
     if keyword:
         like = f"%{keyword}%"
         stmt = stmt.where(or_(Uploader.name.like(like), Uploader.bilibili_uid.like(like)))
@@ -130,6 +135,7 @@ def create_uploader(
         bilibili_uid=payload.bilibili_uid,
         name=f"UID:{payload.bilibili_uid}",  # 真实名称由采集层回填
         group_id=payload.group_id,
+        category=payload.category,
         notify_enabled=payload.notify_enabled,
         unread_count=0,
         created_at=datetime.now(timezone.utc),
@@ -195,6 +201,8 @@ def update_uploader(
 
     if payload.group_id is not None:
         up.group_id = payload.group_id
+    if payload.category is not None:
+        up.category = payload.category or None
     if payload.notify_enabled is not None:
         up.notify_enabled = payload.notify_enabled
 

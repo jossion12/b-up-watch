@@ -1,13 +1,14 @@
 # UP雷达 · 后端接口文档
 
-> 版本：v0.2  
-> 更新日期：2026-07-19  
+> 版本：v0.3  
+> 更新日期：2026-07-22  
 > 适用对象：后端开发、联调前端
 
 ## 变更记录
 
 | 版本 | 变更 |
 |---|---|
+| v0.3 | UP主新增 `category` 类型字段；添加/更新时可设置类型；UP主列表与视频时间线支持按类型过滤 |
 | v0.2 | ① 确认单用户先行，预留多用户扩展；② **移除视频文件下载/存储**（系统只处理字幕与总结）；③ 新增总结 Prompt 模板管理接口；④ 日报/周报功能移入未来规划 |
 | v0.1 | 初版 |
 
@@ -237,6 +238,7 @@ GET /uploaders
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | group_id | string | 否 | 按分组过滤 |
+| category | string | 否 | 按类型过滤，支持逗号分隔多选，如 `AI,财经` |
 | keyword | string | 否 | 按名称模糊搜索 |
 
 **响应** `200`
@@ -283,7 +285,7 @@ GET /uploaders/search?q={keyword}&page={n}
 POST /uploaders
 Content-Type: application/json
 
-{ "bilibili_uid": "946974", "group_id": "g1", "notify_enabled": true }
+{ "bilibili_uid": "946974", "group_id": "g1", "category": "AI", "notify_enabled": true }
 ```
 
 服务端行为：写入关注表 → 立即创建一次该 UP 主的历史投稿拉取任务（建议默认回溯 30 天）。
@@ -307,7 +309,7 @@ DELETE /uploaders/{id}
 ```
 PATCH /uploaders/{id}
 
-{ "group_id": "g2", "notify_enabled": false }
+{ "group_id": "g2", "category": "财经", "notify_enabled": false }
 ```
 
 **响应** `200`：更新后的 Uploader 对象
@@ -327,6 +329,7 @@ GET /videos
 | start_date | date | 是 | 起始日期（含），如 `2026-07-10` |
 | end_date | date | 是 | 结束日期（含），如 `2026-07-19` |
 | up_ids | string[] | 否 | 逗号分隔的UP主ID，缺省为全部 |
+| category | string | 否 | 按UP主类型过滤，支持逗号分隔多选，如 `AI,财经` |
 | status | string | 否 | `new` / `subtitled` / `summarized`，可多选 |
 | limit | int | 否 | 默认 200，最大 500 |
 

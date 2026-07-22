@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Search, ListFilter, RotateCcw, Trash2 } from 'lucide-react'
+import { Search, ListFilter, RotateCcw, Trash2, Pencil } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -16,18 +17,48 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import type { Uploader } from '@/types'
+
+const PRESET_CATEGORIES = [
+  '财经',
+  '时政',
+  'AI',
+  '美食',
+  '科技',
+  '数码',
+  '影视',
+  '知识',
+  '生活',
+  '游戏',
+  '娱乐',
+  '体育',
+  '其他',
+]
+const NONE_KEY = '__none__'
+const CUSTOM_KEY = '__custom__'
 
 interface Props {
   uploaders: Uploader[]
   selected: Set<string>
   onChange: (s: Set<string>) => void
   onDelete?: (id: string) => void | Promise<void>
+  onUpdate?: (id: string, payload: { category: string }) => void | Promise<void>
 }
 
-export default function UpFilter({ uploaders, selected, onChange, onDelete }: Props) {
+export default function UpFilter({ uploaders, selected, onChange, onDelete, onUpdate }: Props) {
   const [query, setQuery] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editCategory, setEditCategory] = useState(NONE_KEY)
+  const [editCustom, setEditCustom] = useState('')
+  const [updating, setUpdating] = useState(false)
   const filtered = uploaders.filter((u) => u.name.toLowerCase().includes(query.toLowerCase()))
 
   const toggle = (id: string) => {
@@ -46,7 +77,37 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete }: Pr
     }
   }
 
+  const startEdit = (u: Uploader) => {
+    const cat = u.category && u.category !== '未分类' ? u.category : ''
+    const isPreset = PRESET_CATEGORIES.includes(cat)
+    setEditId(u.id)
+    setEditCategory(isPreset ? cat : cat ? CUSTOM_KEY : NONE_KEY)
+    setEditCustom(isPreset ? '' : cat)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editId) return
+    const effective =
+      editCategory === CUSTOM_KEY ? editCustom.trim() : editCategory === NONE_KEY ? '' : editCategory
+    setUpdating(true)
+    try {
+      await onUpdate?.(editId, { category: effective })
+    } finally {
+      setUpdating(false)
+      setEditId(null)
+      setEditCategory(NONE_KEY)
+      setEditCustom('')
+    }
+  }
+
+  const handleCancelEdit = () => {
+    setEditId(null)
+    setEditCategory(NONE_KEY)
+    setEditCustom('')
+  }
+
   const confirmingUploader = confirmId ? uploaders.find((u) => u.id === confirmId) : undefined
+  const editingUploader = editId ? uploaders.find((u) => u.id === editId) : undefined
 
   return (
     <>
@@ -101,20 +162,36 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete }: Pr
                   <div className="text-xs font-medium truncate">{u.name}</div>
                   <div className="text-[10px] text-muted-foreground">{u.category}</div>
                 </div>
-                {onDelete && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setConfirmId(u.id)
-                    }}
-                    className="h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-                    title="删除UP主"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
+                <div className="flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  {onUpdate && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        startEdit(u)
+                      }}
+                      className="h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10"
+                      title="修改分类"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setConfirmId(u.id)
+                      }}
+                      className="h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-500/10"
+                      title="删除UP主"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               </label>
             ))}
             {filtered.length === 0 && (
@@ -143,6 +220,51 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete }: Pr
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+
+    <Dialog open={!!editId} onOpenChange={(open) => !open && handleCancelEdit()}>
+      <DialogContent className="sm:max-w-xs">
+        <DialogHeader>
+          <DialogTitle className="text-sm">修改「{editingUploader?.name}」的类型</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-1">
+          <Select value={editCategory} onValueChange={setEditCategory}>
+            <SelectTrigger className="h-9 text-xs w-full">
+              <SelectValue placeholder="未分类" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE_KEY}>未分类</SelectItem>
+              {PRESET_CATEGORIES.map((c) => (
+                <SelectItem key={c} value={c}>
+                  {c}
+                </SelectItem>
+              ))}
+              <SelectItem value={CUSTOM_KEY}>自定义</SelectItem>
+            </SelectContent>
+          </Select>
+          {editCategory === CUSTOM_KEY && (
+            <Input
+              value={editCustom}
+              onChange={(e) => setEditCustom(e.target.value)}
+              placeholder="输入类型..."
+              className="h-9 text-xs"
+            />
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleCancelEdit}>
+              取消
+            </Button>
+            <Button
+              size="sm"
+              className="h-8 text-xs"
+              onClick={handleSaveEdit}
+              disabled={updating || (editCategory === CUSTOM_KEY && !editCustom.trim())}
+            >
+              {updating ? '保存中...' : '保存'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
     </>
   )
 }

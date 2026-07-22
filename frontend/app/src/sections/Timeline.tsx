@@ -20,6 +20,7 @@ interface Props {
   uploaders: Uploader[]
   onOpenVideo: (v: Video) => void
   filterUpIds: Set<string>
+  filterCategories?: Set<string>
   mode: 'swimlane' | 'list'
   onModeChange: (m: 'swimlane' | 'list') => void
   now: Date
@@ -52,7 +53,16 @@ function StatusBadge({ status }: { status: Video['status'] }) {
   )
 }
 
-export default function Timeline({ videos, uploaders, onOpenVideo, filterUpIds, mode, onModeChange, now }: Props) {
+export default function Timeline({
+  videos,
+  uploaders,
+  onOpenVideo,
+  filterUpIds,
+  filterCategories = new Set(),
+  mode,
+  onModeChange,
+  now,
+}: Props) {
   const [range, setRange] = useState<string>('all')
 
   const upMap = useMemo(() => new Map(uploaders.map((u) => [u.id, u])), [uploaders])
@@ -90,7 +100,13 @@ export default function Timeline({ videos, uploaders, onOpenVideo, filterUpIds, 
         <div>
           <h2 className="font-semibold">视频时间线</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {filterUpIds.size > 0 ? `已筛选 ${filterUpIds.size} 位UP主` : '全部UP主'} · 共 {filtered.length} 条更新 · 点击卡片查看详情
+            {filterUpIds.size > 0
+              ? `已筛选 ${filterUpIds.size} 位UP主`
+              : filterCategories.size > 0
+                ? `已筛选 ${filterCategories.size} 种类型`
+                : '全部UP主'}
+            {' · '}
+            共 {filtered.length} 条更新 · 点击卡片查看详情
           </p>
         </div>
         <div className="flex items-center gap-2">

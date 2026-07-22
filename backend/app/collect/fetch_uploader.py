@@ -61,6 +61,22 @@ async def fetch_uploader_videos(
         data = await bili_space.fetch_space_archive(uploader.bilibili_uid, pn=pn, client=client)
         list_node = (data or {}).get("list") or {}
         vlist = list_node.get("vlist") or []
+
+        # 兜底：名片接口失败时，从投稿列表的作者字段回填昵称/头像
+        if vlist and uploader.name and uploader.name.startswith("UID:"):
+            for item in vlist:
+                author = item.get("author")
+                if author and isinstance(author, str) and author.strip():
+                    uploader.name = author.strip()
+                    face = item.get("face")
+                    if face and isinstance(face, str) and face.strip():
+                        uploader.avatar_url = face.strip()
+                    db.commit()
+                    log.info(
+                        "fallback uploader profile from archive uid=%s name=%s",
+                        uploader.bilibili_uid, uploader.name,
+                    )
+                    break
         log.info(
             "fetch_space_archive uid=%s pn=%s data_keys=%s list_keys=%s vlist_len=%s",
             uploader.bilibili_uid,

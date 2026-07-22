@@ -39,6 +39,7 @@ def list_videos(
     start_date: str = Query(..., description="YYYY-MM-DD"),
     end_date: str = Query(..., description="YYYY-MM-DD"),
     up_ids: Optional[str] = None,
+    category: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
@@ -60,6 +61,12 @@ def list_videos(
         ids = [s.strip() for s in up_ids.split(",") if s.strip()]
         if ids:
             stmt = stmt.where(Video.uploader_id.in_(ids))
+    if category:
+        categories = [s.strip() for s in category.split(",") if s.strip()]
+        if categories:
+            stmt = stmt.join(Uploader, Video.uploader_id == Uploader.id).where(
+                Uploader.category.in_(categories)
+            )
 
     stmt = stmt.order_by(Video.published_at.asc()).limit(limit)
     rows = db.execute(stmt).scalars().all()

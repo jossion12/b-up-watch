@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Search, UserPlus, User } from 'lucide-react'
+import { Plus, Search, UserPlus, User, Tag } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -7,8 +7,33 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { uploadersApi } from '@/lib/api'
 import { formatFans } from '@/lib/format'
+
+const PRESET_CATEGORIES = [
+  '财经',
+  '时政',
+  'AI',
+  '美食',
+  '科技',
+  '数码',
+  '影视',
+  '知识',
+  '生活',
+  '游戏',
+  '娱乐',
+  '体育',
+  '其他',
+]
+const NONE_KEY = '__none__'
+const CUSTOM_KEY = '__custom__'
 
 interface SearchItem {
   bilibili_uid: string
@@ -33,14 +58,22 @@ export default function AddUploaderDialog({ onAdded }: Props) {
   const [uid, setUid] = useState('')
   const [addingUid, setAddingUid] = useState<string | null>(null)
 
+  const [category, setCategory] = useState(NONE_KEY)
+  const [customCategory, setCustomCategory] = useState('')
+
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
   const reset = () => {
     setQuery('')
     setItems([])
     setUid('')
+    setCategory(NONE_KEY)
+    setCustomCategory('')
     setMessage(null)
   }
+
+  const effectiveCategory =
+    category === CUSTOM_KEY ? customCategory.trim() : category === NONE_KEY ? '' : category
 
   const doSearch = async () => {
     const q = query.trim()
@@ -69,6 +102,7 @@ export default function AddUploaderDialog({ onAdded }: Props) {
     try {
       await uploadersApi.create({
         bilibili_uid,
+        category: effectiveCategory || undefined,
         notify_enabled: true,
       })
       setMessage({
@@ -109,6 +143,38 @@ export default function AddUploaderDialog({ onAdded }: Props) {
             {message.text}
           </div>
         )}
+
+        {/* 类型选择 */}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Tag className="h-3.5 w-3.5" />
+            <span>选择 UP主类型（可选）</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={category} onValueChange={setCategory}>
+              <SelectTrigger className="h-9 text-xs flex-1">
+                <SelectValue placeholder="未分类" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE_KEY}>未分类</SelectItem>
+                {PRESET_CATEGORIES.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+                <SelectItem value={CUSTOM_KEY}>自定义</SelectItem>
+              </SelectContent>
+            </Select>
+            {category === CUSTOM_KEY && (
+              <Input
+                value={customCategory}
+                onChange={(e) => setCustomCategory(e.target.value)}
+                placeholder="输入类型..."
+                className="h-9 text-xs flex-1"
+              />
+            )}
+          </div>
+        </div>
 
         {/* 昵称搜索 */}
         <div className="flex items-center gap-2 mt-1">

@@ -20,10 +20,19 @@ _load_error: Optional[str] = None
 
 
 def _configure_transformers_import() -> None:
-    """规避全局环境里 tensorflow/jax 与 numpy 版本冲突导致 transformers 导入失败。"""
-    os.environ.setdefault("USE_TF", "0")
+    """规避全局环境里 tensorflow/jax 与 numpy 版本冲突导致 transformers 导入失败。
+
+    transformers 会在初始化时根据环境变量决定是否导入 tf/jax；qwen_asr 又依赖
+    transformers，因此必须在 transformers 任何子模块被加载前强制禁用它们。
+    """
+    # 强制禁用 TensorFlow / JAX，防止 transformers 自动导入后触发 numpy 版本冲突
+    os.environ["USE_TF"] = "0"
+    os.environ["USE_FLAX"] = "0"
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
     try:
         import transformers.utils.import_utils as _import_utils
+
+        _import_utils._tf_available = False
         _import_utils._flax_available = False
     except Exception:
         pass
@@ -99,3 +108,7 @@ def is_available(model_path: str) -> bool:
     except ImportError:
         return False
     return True
+
+
+# 导入本模块时即预处理 transformers 环境，避免后续加载 qwen_asr 时触发 tf/jax 冲突
+_configure_transformers_import()

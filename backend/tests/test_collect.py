@@ -284,6 +284,57 @@ async def test_fetch_uploader_refreshes_profile(db_session_factory, reset_wbi_ca
         assert up.description == "这是简介"
 
 
+@respx.mock
+@pytest.mark.asyncio
+async def test_fetch_uploader_profile_fallback_from_videos(db_session_factory, reset_wbi_cache):
+    """用户名片接口失败时，从投稿列表的作者字段回填昵称/头像。"""
+    respx.get("https://api.bilibili.com/x/web-interface/nav").mock(
+        return_value=httpx.Response(200, json={
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077f.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+                }
+            },
+        })
+    )
+    # 名片接口失败
+    respx.get("https://api.bilibili.com/x/web-interface/card").mock(
+        return_value=httpx.Response(200, json={"code": -404, "message": "账号未登录"})
+    )
+    respx.get("https://api.bilibili.com/x/space/wbi/arc/search").mock(
+        return_value=httpx.Response(200, json={
+            "code": 0,
+            "data": {"list": {"vlist": [
+                {"bvid": "BV1fb001", "title": "视频1", "pic": "https://x/1.jpg",
+                 "length": "05:00", "created": _now_ts(), "play": 10, "video_review": 0, "like": 1,
+                 "author": "真实昵称", "face": "https://x/avatar.jpg", "tag": []},
+            ]}},
+        })
+    )
+
+    with db_session_factory() as db:
+        up = Uploader(
+            id="up_fallback",
+            user_id="default",
+            bilibili_uid="123456",
+            name="UID:123456",
+            unread_count=0,
+            notify_enabled=True,
+        )
+        db.add(up)
+        db.commit()
+        db.refresh(up)
+
+        new_count = await fetch_uploader_videos(db, up)
+        assert new_count == 1
+
+        db.refresh(up)
+        assert up.name == "真实昵称"
+        assert up.avatar_url == "https://x/avatar.jpg"
+
+
 @pytest.mark.asyncio
 async def test_runner_tick_no_pending_returns_none(db_session_factory):
     from app.tasks.runner import TaskRunner

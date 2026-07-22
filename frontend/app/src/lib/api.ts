@@ -46,11 +46,13 @@ export interface BackendUploader {
 export interface UploaderCreateIn {
   bilibili_uid: string
   group_id?: string
+  category?: string
   notify_enabled?: boolean
 }
 
 export interface UploaderUpdateIn {
   group_id?: string
+  category?: string
   notify_enabled?: boolean
 }
 
@@ -107,11 +109,19 @@ export interface VideoListOut {
 }
 
 export const videosApi = {
-  list: (params: { start_date: string; end_date: string; up_ids?: string[]; status?: string[]; limit?: number }) => {
+  list: (params: {
+    start_date: string
+    end_date: string
+    up_ids?: string[]
+    category?: string[]
+    status?: string[]
+    limit?: number
+  }) => {
     const sp = new URLSearchParams()
     sp.set('start_date', params.start_date)
     sp.set('end_date', params.end_date)
     if (params.up_ids?.length) sp.set('up_ids', params.up_ids.join(','))
+    if (params.category?.length) sp.set('category', params.category.join(','))
     if (params.status?.length) sp.set('status', params.status.join(','))
     if (params.limit) sp.set('limit', String(params.limit))
     return request<VideoListOut>(`/videos?${sp.toString()}`)

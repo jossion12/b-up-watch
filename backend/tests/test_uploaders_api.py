@@ -26,6 +26,41 @@ def test_create_and_list(client):
     assert body2["items"][0]["bilibili_uid"] == "946974"
 
 
+def test_create_with_category(client):
+    r = client.post("/api/v1/uploaders", json={"bilibili_uid": "946974", "category": "AI"})
+    assert r.status_code == 201, r.text
+    assert r.json()["uploader"]["category"] == "AI"
+
+
+def test_patch_category(client):
+    create = client.post("/api/v1/uploaders", json={"bilibili_uid": "946974"}).json()
+    uid = create["uploader"]["id"]
+
+    r = client.patch(f"/api/v1/uploaders/{uid}", json={"category": "财经"})
+    assert r.status_code == 200, r.text
+    assert r.json()["category"] == "财经"
+
+    # 空字符串表示清除分类
+    r2 = client.patch(f"/api/v1/uploaders/{uid}", json={"category": ""})
+    assert r2.status_code == 200, r.text
+    assert r2.json()["category"] is None
+
+
+def test_list_filter_by_category(client):
+    client.post("/api/v1/uploaders", json={"bilibili_uid": "111", "category": "AI"})
+    client.post("/api/v1/uploaders", json={"bilibili_uid": "222", "category": "财经"})
+    client.post("/api/v1/uploaders", json={"bilibili_uid": "333"})
+
+    r = client.get("/api/v1/uploaders?category=AI")
+    assert r.status_code == 200
+    assert r.json()["total"] == 1
+    assert r.json()["items"][0]["category"] == "AI"
+
+    r2 = client.get("/api/v1/uploaders?category=AI,财经")
+    assert r2.status_code == 200
+    assert r2.json()["total"] == 2
+
+
 def test_create_duplicate_409(client):
     client.post("/api/v1/uploaders", json={"bilibili_uid": "946974"})
     r = client.post("/api/v1/uploaders", json={"bilibili_uid": "946974"})

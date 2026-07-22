@@ -9,6 +9,7 @@ import Insights from '@/sections/Insights'
 import Jobs from '@/sections/Jobs'
 import VideoPage from '@/sections/VideoPage'
 import UpFilter from '@/sections/UpFilter'
+import CategoryFilter from '@/sections/CategoryFilter'
 import { uploadersApi, videosApi, systemApi } from '@/lib/api'
 import { mapUploader, mapVideo } from '@/lib/format'
 import { useWebSocket } from '@/hooks/useWebSocket'
@@ -28,6 +29,7 @@ export default function App() {
   const [view, setView] = useState<View>('timeline')
   const [centerMode, setCenterMode] = useState<'swimlane' | 'list'>('swimlane')
   const [filterUpIds, setFilterUpIds] = useState<Set<string>>(new Set())
+  const [filterCategories, setFilterCategories] = useState<Set<string>>(new Set())
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null)
 
   const [uploaders, setUploaders] = useState<Uploader[]>([])
@@ -174,9 +176,18 @@ export default function App() {
   }
 
   const filteredVideos = useMemo(() => {
-    if (filterUpIds.size === 0) return videos
-    return videos.filter((v) => filterUpIds.has(v.upId))
-  }, [videos, filterUpIds])
+    let list = videos
+    if (filterUpIds.size > 0) {
+      list = list.filter((v) => filterUpIds.has(v.upId))
+    }
+    if (filterCategories.size > 0) {
+      list = list.filter((v) => {
+        const up = uploaders.find((u) => u.id === v.upId)
+        return up && filterCategories.has(up.category)
+      })
+    }
+    return list
+  }, [videos, filterUpIds, filterCategories, uploaders])
 
   return (
     <Routes>
@@ -228,6 +239,12 @@ export default function App() {
 
               {error && <span className="text-xs text-red-500">{error}</span>}
 
+              <CategoryFilter
+                uploaders={uploaders}
+                selected={filterCategories}
+                onChange={setFilterCategories}
+              />
+
               <UpFilter
                 uploaders={uploaders}
                 selected={filterUpIds}
@@ -239,6 +256,10 @@ export default function App() {
                     next.delete(id)
                     return next
                   })
+                  await loadUploaders()
+                }}
+                onUpdate={async (id, payload) => {
+                  await uploadersApi.update(id, payload)
                   await loadUploaders()
                 }}
               />
@@ -285,6 +306,7 @@ export default function App() {
                     onSelectVideo={handleSelectVideo}
                     onOpenVideo={handleOpenVideo}
                     filterUpIds={filterUpIds}
+                    filterCategories={filterCategories}
                     mode={centerMode}
                     onModeChange={setCenterMode}
                     now={NOW}
@@ -296,6 +318,7 @@ export default function App() {
                     uploaders={uploaders}
                     onOpenVideo={handleOpenVideo}
                     filterUpIds={filterUpIds}
+                    filterCategories={filterCategories}
                     mode={centerMode}
                     onModeChange={setCenterMode}
                     now={NOW}

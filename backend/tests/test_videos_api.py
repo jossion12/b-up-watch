@@ -61,6 +61,35 @@ def test_videos_timeline_filter_status_and_uploader(client, db_session_factory):
     assert r.json()["total"] == 1
 
 
+def test_videos_timeline_filter_category(client, db_session_factory):
+    with db_session_factory() as db:
+        up1 = Uploader(
+            id="u1", user_id="default", bilibili_uid="1", name="A",
+            category="AI", unread_count=0, notify_enabled=True,
+        )
+        up2 = Uploader(
+            id="u2", user_id="default", bilibili_uid="2", name="B",
+            category="财经", unread_count=0, notify_enabled=True,
+        )
+        db.add_all([up1, up2])
+        _seed(db, uploader_id="u1")
+        _seed(db, uploader_id="u2")
+        db.commit()
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    week_ago = (datetime.now(timezone.utc).date() - timedelta(days=7)).isoformat()
+
+    r = client.get(f"/api/v1/videos?start_date={week_ago}&end_date={today}&category=AI")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["uploader_id"] == "u1"
+
+    r2 = client.get(f"/api/v1/videos?start_date={week_ago}&end_date={today}&category=AI,财经")
+    assert r2.status_code == 200
+    assert r2.json()["total"] == 2
+
+
 def test_videos_timeline_invalid_date(client):
     r = client.get("/api/v1/videos?start_date=bad&end_date=2026-01-01")
     assert r.status_code == 400

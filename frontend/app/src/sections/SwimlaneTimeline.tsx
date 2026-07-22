@@ -16,6 +16,7 @@ interface Props {
   onSelectVideo: (v: Video) => void
   onOpenVideo: (v: Video) => void
   filterUpIds: Set<string>
+  filterCategories?: Set<string>
   mode: 'swimlane' | 'list'
   onModeChange: (m: 'swimlane' | 'list') => void
   now: Date
@@ -62,7 +63,16 @@ function StatusBadge({ status }: { status: Video['status'] }) {
 }
 
 export default function SwimlaneTimeline({
-  videos, uploaders, selectedVideoId, onSelectVideo, onOpenVideo, filterUpIds, mode, onModeChange, now,
+  videos,
+  uploaders,
+  selectedVideoId,
+  onSelectVideo,
+  onOpenVideo,
+  filterUpIds,
+  filterCategories = new Set(),
+  mode,
+  onModeChange,
+  now,
   onLoadOlder,
 }: Props) {
   const [zoomIdx, setZoomIdx] = useState(1)
@@ -88,7 +98,13 @@ export default function SwimlaneTimeline({
   const xOf = (d: Date) => ((d.getTime() - start.getTime()) / MS_PER_DAY) * dayWidth
 
   const rows = useMemo(() => {
-    const ups = filterUpIds.size > 0 ? uploaders.filter((u) => filterUpIds.has(u.id)) : uploaders
+    let ups = uploaders
+    if (filterUpIds.size > 0) {
+      ups = ups.filter((u) => filterUpIds.has(u.id))
+    }
+    if (filterCategories.size > 0) {
+      ups = ups.filter((u) => filterCategories.has(u.category))
+    }
     return ups
       .map((up) => {
         const vids = videos
