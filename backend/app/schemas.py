@@ -52,6 +52,12 @@ class UploaderCreateOut(_Base):
     task_id: str
 
 
+class UploaderPrioritizeLatestOut(_Base):
+    enqueued_subtitle: int
+    enqueued_summary: int
+    task_ids: list[str]
+
+
 # ---------- 搜索代理（3.1.2） ----------
 
 class UploaderSearchItem(_Base):
@@ -123,6 +129,7 @@ class TaskOut(_Base):
     ref_type: Optional[str] = None
     ref_id: Optional[str] = None
     error: Optional[dict] = None
+    priority: int = 0
     created_at: datetime
     finished_at: Optional[datetime] = None
 
@@ -130,6 +137,15 @@ class TaskOut(_Base):
 class TaskListOut(_Base):
     items: list[TaskOut]
     total: int
+
+
+class TaskStatsOut(_Base):
+    subtitle_total: int
+    subtitle_pending: int
+    subtitle_completed: int
+    summary_total: int
+    summary_pending: int
+    summary_completed: int
 
 
 # ---------- 字幕 ----------

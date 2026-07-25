@@ -3,14 +3,15 @@ import { useParams, useNavigate } from 'react-router'
 import {
   Play, Eye, MessageSquare, ThumbsUp, FileText, Sparkles,
   Loader2, Check, Quote, Lightbulb, MessageCircle, Tags, ExternalLink,
-  ArrowLeft, Tv, Download,
+  ArrowLeft, Tv, Download, Zap,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
-import { videosApi, subtitlesApi, summariesApi, tasksApi } from '@/lib/api'
+import { videosApi, subtitlesApi, summariesApi, tasksApi, uploadersApi } from '@/lib/api'
 import { mapVideo, mapSummary, mapSubtitles, pickColor } from '@/lib/format'
 import type { Video, Uploader, VideoSummary, SubtitleLine } from '@/types'
 import type { BackendVideoDetail, BackendTask } from '@/lib/api'
@@ -74,6 +75,7 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [subtitleError, setSubtitleError] = useState<string | null>(null)
   const [summaryError, setSummaryError] = useState<string | null>(null)
+  const [prioritizeLoading, setPrioritizeLoading] = useState(false)
 
   const [summary, setSummary] = useState<VideoSummary | null>(null)
   const [subtitles, setSubtitles] = useState<SubtitleLine[]>([])
@@ -179,6 +181,26 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
     }
   }
 
+  const handlePrioritizeUploader = async () => {
+    if (!up) return
+    setPrioritizeLoading(true)
+    try {
+      const res = await uploadersApi.prioritizeLatest(up.id, 10)
+      const total = res.enqueued_subtitle + res.enqueued_summary
+      if (total === 0) {
+        toast.info(`「${up.name}」的最近 10 个视频已全部处理完毕`)
+      } else {
+        toast.success(
+          `已为「${up.name}」优先排队 ${total} 个任务（字幕 ${res.enqueued_subtitle} / 总结 ${res.enqueued_summary}）`
+        )
+      }
+    } catch (e: any) {
+      toast.error(e?.error?.message || '优先排队失败')
+    } finally {
+      setPrioritizeLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -221,6 +243,16 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
         </div>
         <div className="flex-1" />
         <span className="text-xs text-muted-foreground font-mono">{video.bvid}</span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-xs gap-1"
+          onClick={handlePrioritizeUploader}
+          disabled={prioritizeLoading || !up}
+        >
+          {prioritizeLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+          为该 UP 优先排队最近 10 个
+        </Button>
         <Button variant="outline" size="sm" className="text-xs gap-1" asChild>
           <a href={`https://www.bilibili.com/video/${video.bvid}`} target="_blank" rel="noreferrer">
             <ExternalLink className="h-3.5 w-3.5" /> 在B站打开
@@ -232,7 +264,17 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
       <main className="max-w-[880px] mx-auto px-6 py-6 space-y-5">
         {/* 封面 */}
         <div className={cn('relative aspect-video rounded-2xl bg-gradient-to-br flex items-center justify-center overflow-hidden shadow-lg', video.gradient)}>
-          <Play className="h-20 w-20 text-white/80 fill-white/80" />
+          {video.cover && (
+            <img
+              src={video.cover}
+              alt={video.title}
+              className="absolute inset-0 h-full w-full object-cover"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              onError={(e) => { e.currentTarget.style.display = 'none' }}
+            />
+          )}
+          <Play className="relative h-20 w-20 text-white/80 fill-white/80 drop-shadow" />
           <span className="absolute bottom-3 right-3 rounded bg-black/70 text-white text-sm px-2.5 py-1 font-medium">
             {video.duration}
           </span>

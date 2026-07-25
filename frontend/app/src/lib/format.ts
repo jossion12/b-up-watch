@@ -105,6 +105,7 @@ export function mapVideo(v: BackendVideo, now: Date): Video {
     tags: v.tags || [],
     status: mapBackendStatus(v.status),
     gradient: `from-${toneFromColor(pickColor(v.id))}-400 to-${toneFromColor(pickColor(v.uploader_id))}-600`,
+    cover: v.cover_url || undefined,
     summary: undefined,
     subtitles: [],
   }

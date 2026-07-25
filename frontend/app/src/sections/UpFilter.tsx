@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Search, ListFilter, RotateCcw, Trash2, Pencil } from 'lucide-react'
+import { Search, ListFilter, RotateCcw, Trash2, Pencil, Zap } from 'lucide-react'
+import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { uploadersApi } from '@/lib/api'
 import type { Uploader } from '@/types'
 
 const PRESET_CATEGORIES = [
@@ -59,6 +61,8 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
   const [editCategory, setEditCategory] = useState(NONE_KEY)
   const [editCustom, setEditCustom] = useState('')
   const [updating, setUpdating] = useState(false)
+  const [prioritizeId, setPrioritizeId] = useState<string | null>(null)
+  const [prioritizing, setPrioritizing] = useState(false)
   const filtered = uploaders.filter((u) => u.name.toLowerCase().includes(query.toLowerCase()))
 
   const toggle = (id: string) => {
@@ -108,6 +112,28 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
 
   const confirmingUploader = confirmId ? uploaders.find((u) => u.id === confirmId) : undefined
   const editingUploader = editId ? uploaders.find((u) => u.id === editId) : undefined
+  const prioritizingUploader = prioritizeId ? uploaders.find((u) => u.id === prioritizeId) : undefined
+
+  const handleConfirmPrioritize = async () => {
+    if (!prioritizeId) return
+    setPrioritizing(true)
+    try {
+      const res = await uploadersApi.prioritizeLatest(prioritizeId, 10)
+      const total = res.enqueued_subtitle + res.enqueued_summary
+      if (total === 0) {
+        toast.info(`「${prioritizingUploader?.name || ''}」的最近 10 个视频已全部处理完毕`)
+      } else {
+        toast.success(
+          `已为「${prioritizingUploader?.name || ''}」优先排队 ${total} 个任务（字幕 ${res.enqueued_subtitle} / 总结 ${res.enqueued_summary}）`
+        )
+      }
+    } catch (e: any) {
+      toast.error(e?.error?.message || '优先排队失败')
+    } finally {
+      setPrioritizing(false)
+      setPrioritizeId(null)
+    }
+  }
 
   return (
     <>
@@ -163,6 +189,18 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
                   <div className="text-[10px] text-muted-foreground">{u.category}</div>
                 </div>
                 <div className="flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setPrioritizeId(u.id)
+                    }}
+                    className="h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10"
+                    title="优先处理最近 10 个视频"
+                  >
+                    <Zap className="h-3.5 w-3.5" />
+                  </button>
                   {onUpdate && (
                     <button
                       type="button"
@@ -216,6 +254,31 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
           <AlertDialogCancel onClick={() => setConfirmId(null)}>取消</AlertDialogCancel>
           <AlertDialogAction onClick={handleConfirmDelete} className="bg-red-600 hover:bg-red-700">
             删除
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog open={!!prioritizeId} onOpenChange={(open) => !open && setPrioritizeId(null)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>优先处理最近 10 个视频？</AlertDialogTitle>
+          <AlertDialogDescription>
+            {prioritizingUploader
+              ? `将为「${prioritizingUploader.name}」的最近 10 个视频优先排队字幕和总结任务，已有进行中的任务会自动跳过。`
+              : '将为该 UP 主的最近 10 个视频优先排队字幕和总结任务。'}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => setPrioritizeId(null)} disabled={prioritizing}>
+            取消
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleConfirmPrioritize}
+            disabled={prioritizing}
+            className="bg-amber-600 hover:bg-amber-700"
+          >
+            {prioritizing ? '排队中...' : '确认优先'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

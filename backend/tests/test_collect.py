@@ -335,6 +335,63 @@ async def test_fetch_uploader_profile_fallback_from_videos(db_session_factory, r
         assert up.avatar_url == "https://x/avatar.jpg"
 
 
+@respx.mock
+@pytest.mark.asyncio
+async def test_fetch_uploader_does_not_crash_on_naive_last_video_at(
+    db_session_factory, reset_wbi_cache
+):
+    """SQLite 读出的 last_video_at 可能丢失时区；与 aware 的 latest_pub 比较不应抛异常。"""
+    respx.get("https://api.bilibili.com/x/web-interface/nav").mock(
+        return_value=httpx.Response(200, json={
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077f.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+                }
+            },
+        })
+    )
+    respx.get("https://api.bilibili.com/x/web-interface/card").mock(
+        return_value=httpx.Response(200, json={
+            "code": 0,
+            "data": {"card": {"name": "naive", "face": "", "fans": 0, "sign": ""}},
+        })
+    )
+    respx.get("https://api.bilibili.com/x/space/wbi/arc/search").mock(
+        return_value=httpx.Response(200, json={
+            "code": 0,
+            "data": {"list": {"vlist": [
+                {"bvid": "BV1tz001", "title": "new", "pic": None,
+                 "length": "04:00", "created": _now_ts(), "play": 9, "video_review": 0, "like": 0, "tag": []},
+            ]}},
+        })
+    )
+
+    with db_session_factory() as db:
+        original = datetime(2026, 7, 1, 0, 0, 0)  # naive，模拟 SQLite 读出
+        up = Uploader(
+            id="up_naive",
+            user_id="default",
+            bilibili_uid="4",
+            name="naive",
+            unread_count=0,
+            notify_enabled=True,
+            last_video_at=original,
+        )
+        db.add(up)
+        db.commit()
+        db.refresh(up)
+
+        new_count = await fetch_uploader_videos(db, up)
+        assert new_count == 1
+
+        db.refresh(up)
+        assert up.last_video_at is not None
+        assert up.last_video_at > original
+        assert up.unread_count == 1
+
+
 @pytest.mark.asyncio
 async def test_runner_tick_no_pending_returns_none(db_session_factory):
     from app.tasks.runner import TaskRunner

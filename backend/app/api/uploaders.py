@@ -14,12 +14,13 @@ from sqlalchemy.orm import Session
 from app.bilibili import search as bili_search
 from app.db import get_db
 from app.errors import BizError
-from app.models import DEFAULT_USER_ID, Task, Uploader
+from app.models import DEFAULT_USER_ID, Task, Uploader, Video
 from app.schemas import (
     UploaderCreateIn,
     UploaderCreateOut,
     UploaderListOut,
     UploaderOut,
+    UploaderPrioritizeLatestOut,
     UploaderSearchItem,
     UploaderSearchOut,
     UploaderUpdateIn,
@@ -209,3 +210,103 @@ def update_uploader(
     db.commit()
     db.refresh(up)
     return UploaderOut.model_validate(up)
+
+
+# ---------- 优先处理最近 N 个视频 ----------
+
+PRIORITY_LEVEL = 10
+
+
+def _active_task_exists(db: Session, task_type: str, ref_id: str) -> bool:
+    return (
+        db.execute(
+            select(Task.task_id).where(
+                Task.type == task_type,
+                Task.ref_type == "video",
+                Task.ref_id == ref_id,
+                Task.status.in_(["pending", "running"]),
+            )
+        ).scalar_one_or_none()
+        is not None
+    )
+
+
+@router.post(
+    "/uploaders/{uploader_id}/prioritize-latest",
+    response_model=UploaderPrioritizeLatestOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def prioritize_uploader_latest(
+    uploader_id: str,
+    request: Request,
+    count: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> UploaderPrioritizeLatestOut:
+    """为某 UP 主最近 count 个视频优先排队字幕/总结任务。"""
+    up = db.get(Uploader, uploader_id)
+    if up is None or up.user_id != DEFAULT_USER_ID:
+        raise BizError("UPLOADER_NOT_FOUND", "UP主不存在", http_status=404)
+
+    videos = db.execute(
+        select(Video)
+        .where(Video.user_id == DEFAULT_USER_ID, Video.uploader_id == up.id)
+        .order_by(Video.published_at.desc())
+        .limit(count)
+    ).scalars().all()
+
+    enqueued_subtitle = 0
+    enqueued_summary = 0
+    task_ids: list[str] = []
+
+    now = datetime.now(timezone.utc)
+    for v in videos:
+        if not v.has_subtitle and not _active_task_exists(db, "subtitle_fetch", v.id):
+            task = Task(
+                task_id=_new_id(),
+                type="subtitle_fetch",
+                status="pending",
+                progress=0,
+                ref_type="video",
+                ref_id=v.id,
+                priority=PRIORITY_LEVEL,
+                created_at=now,
+            )
+            db.add(task)
+            task_ids.append(task.task_id)
+            enqueued_subtitle += 1
+
+        if not v.has_summary and not _active_task_exists(db, "ai_summary", v.id):
+            task = Task(
+                task_id=_new_id(),
+                type="ai_summary",
+                status="pending",
+                progress=0,
+                ref_type="video",
+                ref_id=v.id,
+                priority=PRIORITY_LEVEL,
+                created_at=now,
+            )
+            db.add(task)
+            task_ids.append(task.task_id)
+            enqueued_summary += 1
+
+    db.commit()
+
+    runner = getattr(request.app.state, "runner", None)
+    if runner is not None:
+        runner.notify()
+
+    log.info(
+        "prioritize_latest uploader=%s count=%d videos=%d subtitle=%d summary=%d",
+        up.bilibili_uid,
+        count,
+        len(videos),
+        enqueued_subtitle,
+        enqueued_summary,
+    )
+
+    return UploaderPrioritizeLatestOut(
+        enqueued_subtitle=enqueued_subtitle,
+        enqueued_summary=enqueued_summary,
+        task_ids=task_ids,
+    )

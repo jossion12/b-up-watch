@@ -165,6 +165,7 @@ class Task(Base):
     ref_id: Mapped[Optional[str]] = mapped_column(String(32))
     meta: Mapped[Optional[dict]] = mapped_column(JSON)  # 任务级参数，如 template_id/model
     error: Mapped[Optional[dict]] = mapped_column(JSON)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 

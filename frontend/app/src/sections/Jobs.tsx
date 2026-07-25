@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, Loader2, Clock, Film, Sparkles } from 'lucide-react'
+import { Activity, Loader2, Clock, Film, Sparkles, Flame } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { jobsApi, tasksApi, type JobItem, type BackendTask } from '@/lib/api'
+import { jobsApi, tasksApi, type JobItem, type BackendTask, type TaskStatsOut } from '@/lib/api'
 import type { Uploader, Video } from '@/types'
 
 const JOB_ICONS: Record<string, string> = {
@@ -44,6 +44,9 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
   const [tasksLoading, setTasksLoading] = useState(true)
   const [tasksError, setTasksError] = useState<string | null>(null)
 
+  const [stats, setStats] = useState<TaskStatsOut | null>(null)
+  const [statsLoading, setStatsLoading] = useState(true)
+
   const loadJobs = async () => {
     try {
       const res = await jobsApi.list()
@@ -68,12 +71,25 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
     }
   }
 
+  const loadStats = async () => {
+    try {
+      const res = await tasksApi.stats()
+      setStats(res)
+    } catch {
+      // 统计失败不阻塞主界面
+    } finally {
+      setStatsLoading(false)
+    }
+  }
+
   useEffect(() => {
     loadJobs()
     loadTasks()
+    loadStats()
     const id = setInterval(() => {
       loadJobs()
       loadTasks()
+      loadStats()
     }, 2000)
     return () => clearInterval(id)
   }, [])
@@ -160,6 +176,11 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
                         <span className="text-sm truncate" title={TASK_TYPE_LABEL[task.type] || task.type}>
                           {TASK_TYPE_LABEL[task.type] || task.type}
                         </span>
+                        {task.priority > 0 && (
+                          <Badge className="gap-0.5 bg-amber-500/10 text-amber-600 border-amber-200 hover:bg-amber-500/10 text-[10px] px-1">
+                            <Flame className="h-2.5 w-2.5" /> 优先
+                          </Badge>
+                        )}
                       </div>
                       <span className="text-xs text-muted-foreground shrink-0">
                         {task.progress}%
@@ -257,6 +278,94 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
               ))}
             </div>
           )}
+
+          {/* 任务统计 */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <Film className="h-4 w-4 text-blue-500" />
+                  <CardTitle className="text-base">字幕抓取</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-6">
+                  <div>
+                    <div className="text-2xl font-semibold">
+                      {statsLoading || !stats ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        stats.subtitle_total
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">总数</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold">
+                      {statsLoading || !stats ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        stats.subtitle_pending
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">待执行</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold">
+                      {statsLoading || !stats ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        stats.subtitle_completed
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">已完成</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-amber-500" />
+                  <CardTitle className="text-base">AI 总结</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-6">
+                  <div>
+                    <div className="text-2xl font-semibold">
+                      {statsLoading || !stats ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        stats.summary_total
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">总数</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold">
+                      {statsLoading || !stats ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        stats.summary_pending
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">待执行</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold">
+                      {statsLoading || !stats ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        stats.summary_completed
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">已完成</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
 
           {/* 待执行队列 */}
           <div className="grid gap-4 md:grid-cols-2">

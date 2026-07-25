@@ -24,6 +24,15 @@ log = logging.getLogger(__name__)
 _MAX_PAGES = 5
 
 
+def _ensure_aware(dt: datetime | None) -> datetime | None:
+    """SQLite 读出的 DateTime(timezone=True) 可能丢失 tzinfo，补回 UTC。"""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 async def fetch_uploader_videos(
     db: Session,
     uploader: Uploader,
@@ -180,7 +189,7 @@ async def fetch_uploader_videos(
             break
 
     if latest_pub is not None:
-        current = uploader.last_video_at
+        current = _ensure_aware(uploader.last_video_at)
         if current is None or latest_pub > current:
             uploader.last_video_at = latest_pub
 

@@ -408,8 +408,18 @@ export default function SwimlaneTimeline({
                           </button>
                         </HoverCardTrigger>
                         <HoverCardContent side="top" align="center" className="w-[320px] p-0 overflow-hidden">
-                          <div className={cn('relative aspect-video bg-gradient-to-br flex items-center justify-center', v.gradient)}>
-                            <Play className="h-10 w-10 text-white/85 fill-white/85" />
+                          <div className={cn('relative aspect-video bg-gradient-to-br flex items-center justify-center overflow-hidden', v.gradient)}>
+                            {v.cover && (
+                              <img
+                                src={v.cover}
+                                alt={v.title}
+                                className="absolute inset-0 h-full w-full object-cover"
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                                onError={(e) => { e.currentTarget.style.display = 'none' }}
+                              />
+                            )}
+                            <Play className="relative h-10 w-10 text-white/85 fill-white/85 drop-shadow" />
                             <span className="absolute bottom-2 right-2 rounded bg-black/70 text-white text-[10px] px-1.5 py-0.5 font-medium">
                               {v.duration}
                             </span>

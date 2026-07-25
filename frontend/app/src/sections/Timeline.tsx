@@ -174,7 +174,17 @@ export default function Timeline({
                           v.gradient
                         )}
                       >
-                        <Play className="h-8 w-8 text-white/80 fill-white/80" />
+                        {v.cover && (
+                          <img
+                            src={v.cover}
+                            alt={v.title}
+                            className="absolute inset-0 h-full w-full object-cover"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.currentTarget.style.display = 'none' }}
+                          />
+                        )}
+                        <Play className="relative h-8 w-8 text-white/80 fill-white/80 drop-shadow" />
                         <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 text-white text-[10px] px-1.5 py-0.5 font-medium">
                           {v.duration}
                         </span>

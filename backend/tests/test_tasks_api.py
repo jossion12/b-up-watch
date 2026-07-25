@@ -60,3 +60,47 @@ def test_list_tasks_default_limit(client, db_session_factory):
     assert r.status_code == 200
     # 默认 limit=20
     assert len(r.json()["items"]) == 20
+
+
+def test_task_stats(client, db_session_factory):
+    import uuid
+    with db_session_factory() as db:
+        # subtitle_fetch: 1 pending, 1 success
+        db.add(Task(
+            task_id=uuid.uuid4().hex[:12], type="subtitle_fetch", status="pending",
+            progress=0, created_at=datetime.now(timezone.utc),
+        ))
+        db.add(Task(
+            task_id=uuid.uuid4().hex[:12], type="subtitle_fetch", status="success",
+            progress=100, created_at=datetime.now(timezone.utc),
+        ))
+        # whisper_transcribe: 1 running
+        db.add(Task(
+            task_id=uuid.uuid4().hex[:12], type="whisper_transcribe", status="running",
+            progress=50, created_at=datetime.now(timezone.utc),
+        ))
+        # ai_summary: 1 pending, 1 failed
+        db.add(Task(
+            task_id=uuid.uuid4().hex[:12], type="ai_summary", status="pending",
+            progress=0, created_at=datetime.now(timezone.utc),
+        ))
+        db.add(Task(
+            task_id=uuid.uuid4().hex[:12], type="ai_summary", status="failed",
+            progress=0, created_at=datetime.now(timezone.utc),
+        ))
+        # feed_refresh should be ignored
+        db.add(Task(
+            task_id=uuid.uuid4().hex[:12], type="feed_refresh", status="pending",
+            progress=0, created_at=datetime.now(timezone.utc),
+        ))
+        db.commit()
+
+    r = client.get("/api/v1/tasks/stats")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["subtitle_total"] == 3
+    assert body["subtitle_pending"] == 2
+    assert body["subtitle_completed"] == 1
+    assert body["summary_total"] == 2
+    assert body["summary_pending"] == 1
+    assert body["summary_completed"] == 0

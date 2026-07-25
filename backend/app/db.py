@@ -3,7 +3,7 @@
 from collections.abc import Iterator
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -45,6 +45,20 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
+def _migrate_priority_column() -> None:
+    """无 Alembic 时的兜底迁移：确保 tasks 表包含 priority 列。"""
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+            columns = {c["name"] for c in inspector.get_columns("tasks")}
+            if "priority" not in columns:
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"))
+                conn.commit()
+    except Exception:
+        # 首次启动表尚未创建时忽略；后续启动再检查
+        pass
+
+
 def init_db() -> None:
     """首次启动建表 + seed 默认模板与系统配置。"""
     from app import models  # noqa: F401  触发注册
@@ -56,6 +70,7 @@ def init_db() -> None:
         db_file.parent.mkdir(parents=True, exist_ok=True)
 
     Base.metadata.create_all(bind=engine)
+    _migrate_priority_column()
 
     with SessionLocal() as db:
         from app.models import SystemConfig, SummaryTemplate

@@ -38,11 +38,28 @@ class TaskRunner:
         # 当前正在执行的任务（仅用于展示），单 worker 无需锁
         self.current_task: Task | None = None
 
+    def _recover_stale_tasks(self) -> int:
+        """启动时把上次崩溃遗留的 running 任务重置为 pending，避免永远卡住。"""
+        from app.db import SessionLocal
+        factory = self._session_factory or SessionLocal
+        with factory() as db:
+            tasks = db.execute(
+                select(Task).where(Task.status == "running")
+            ).scalars().all()
+            for task in tasks:
+                task.status = "pending"
+                task.error = None
+            if tasks:
+                db.commit()
+                log.info("recovered %d stale running task(s) to pending", len(tasks))
+            return len(tasks)
+
     async def start(self) -> None:
         self._stop.clear()
         self._wake.clear()
+        recovered = self._recover_stale_tasks()
         self._task = asyncio.create_task(self._loop(), name="task-runner")
-        log.info("task runner started, interval=%.1fs", self.interval)
+        log.info("task runner started, interval=%.1fs, recovered=%d", self.interval, recovered)
 
     async def stop(self) -> None:
         self._stop.set()
@@ -79,7 +96,7 @@ class TaskRunner:
             task = db.execute(
                 select(Task)
                 .where(Task.status == "pending")
-                .order_by(Task.created_at.asc())
+                .order_by(Task.priority.desc(), Task.created_at.asc())
                 .limit(1)
             ).scalar_one_or_none()
             if task is None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, patch
 
 
@@ -207,3 +208,102 @@ def test_extract_user_items_empty():
     assert _extract_user_items({}) == []
     assert _extract_user_items({"result": []}) == []
     assert _extract_user_items({"result": {}}) == []
+
+
+# ---------- 优先处理最近视频 ----------
+
+
+def _make_uploader_and_videos(db_session_factory, video_count: int = 3):
+    from datetime import datetime, timezone
+    from app.models import DEFAULT_USER_ID, Uploader, Video
+
+    with db_session_factory() as db:
+        up = Uploader(
+            id=uuid.uuid4().hex[:12],
+            user_id=DEFAULT_USER_ID,
+            bilibili_uid=uuid.uuid4().hex[:8],
+            name="TestUP",
+            unread_count=0,
+            notify_enabled=True,
+        )
+        db.add(up)
+        db.commit()
+        db.refresh(up)
+
+        videos = []
+        now = datetime.now(timezone.utc)
+        for i in range(video_count):
+            v = Video(
+                id=uuid.uuid4().hex[:12],
+                user_id=DEFAULT_USER_ID,
+                bvid=f"BV{uuid.uuid4().hex[:8]}",
+                uploader_id=up.id,
+                title=f"video {i}",
+                duration_sec=120,
+                published_at=now,
+                has_subtitle=False,
+                has_summary=False,
+            )
+            db.add(v)
+            videos.append(v)
+        db.commit()
+        for v in videos:
+            db.refresh(v)
+        return up, videos
+
+
+def test_prioritize_latest_enqueues_tasks(client, db_session_factory):
+    up, videos = _make_uploader_and_videos(db_session_factory, video_count=3)
+
+    r = client.post(f"/api/v1/uploaders/{up.id}/prioritize-latest?count=10")
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["enqueued_subtitle"] == 3
+    assert body["enqueued_summary"] == 3
+    assert len(body["task_ids"]) == 6
+
+    from app.models import Task
+
+    with db_session_factory() as db:
+        tasks = db.query(Task).filter(Task.ref_id.in_([v.id for v in videos])).all()
+        assert len(tasks) == 6
+        assert all(t.priority == 10 for t in tasks)
+
+
+def test_prioritize_latest_skips_active_and_done(client, db_session_factory):
+    from datetime import datetime, timezone
+    from app.models import Task, Video
+
+    up, videos = _make_uploader_and_videos(db_session_factory, video_count=2)
+
+    # 第一个视频：已有字幕，且已有进行中的总结任务
+    with db_session_factory() as db:
+        v1 = db.get(Video, videos[0].id)
+        v1.has_subtitle = True
+        db.add(
+            Task(
+                task_id=uuid.uuid4().hex[:12],
+                type="ai_summary",
+                status="running",
+                progress=0,
+                ref_type="video",
+                ref_id=v1.id,
+                priority=0,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        db.commit()
+
+    r = client.post(f"/api/v1/uploaders/{up.id}/prioritize-latest?count=10")
+    assert r.status_code == 202, r.text
+    body = r.json()
+    # v1: 跳过字幕 + 跳过总结；v2: 各一个
+    assert body["enqueued_subtitle"] == 1
+    assert body["enqueued_summary"] == 1
+    assert len(body["task_ids"]) == 2
+
+
+def test_prioritize_latest_404(client):
+    r = client.post("/api/v1/uploaders/does_not_exist/prioritize-latest")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "UPLOADER_NOT_FOUND"

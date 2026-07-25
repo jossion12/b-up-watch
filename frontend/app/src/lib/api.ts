@@ -56,6 +56,12 @@ export interface UploaderUpdateIn {
   notify_enabled?: boolean
 }
 
+export interface UploaderPrioritizeLatestOut {
+  enqueued_subtitle: number
+  enqueued_summary: number
+  task_ids: string[]
+}
+
 export const uploadersApi = {
   list: () => request<{ items: BackendUploader[]; total: number }>('/uploaders'),
   search: (q: string, page = 1) =>
@@ -73,6 +79,10 @@ export const uploadersApi = {
     request<BackendUploader>(`/uploaders/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
+    }),
+  prioritizeLatest: (id: string, count = 10) =>
+    request<UploaderPrioritizeLatestOut>(`/uploaders/${id}/prioritize-latest?count=${count}`, {
+      method: 'POST',
     }),
 }
 
@@ -210,8 +220,18 @@ export interface BackendTask {
   ref_type?: string
   ref_id?: string
   error?: { code: string; message: string; details?: any }
+  priority: number
   created_at: string
   finished_at?: string
+}
+
+export interface TaskStatsOut {
+  subtitle_total: number
+  subtitle_pending: number
+  subtitle_completed: number
+  summary_total: number
+  summary_pending: number
+  summary_completed: number
 }
 
 export const tasksApi = {
@@ -221,6 +241,7 @@ export const tasksApi = {
     if (status?.length) sp.set('status', status.join(','))
     return request<{ items: BackendTask[]; total: number }>(`/tasks?${sp.toString()}`)
   },
+  stats: () => request<TaskStatsOut>('/tasks/stats'),
 }
 
 // ---------- 模板 ----------

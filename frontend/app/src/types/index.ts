@@ -48,6 +48,8 @@ export interface Video {
   tags: string[]
   status: VideoStatus
   gradient: string
+  /** 视频封面 URL */
+  cover?: string
   summary?: VideoSummary
   subtitles: SubtitleLine[]
 }
