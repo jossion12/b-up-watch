@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Search, ListFilter, RotateCcw, Trash2, Pencil, Zap } from 'lucide-react'
+import { Search, ListFilter, RotateCcw, Trash2, Pencil, Zap, History } from 'lucide-react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -63,6 +63,8 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
   const [updating, setUpdating] = useState(false)
   const [prioritizeId, setPrioritizeId] = useState<string | null>(null)
   const [prioritizing, setPrioritizing] = useState(false)
+  const [backfillId, setBackfillId] = useState<string | null>(null)
+  const [backfilling, setBackfilling] = useState(false)
   const filtered = uploaders.filter((u) => u.name.toLowerCase().includes(query.toLowerCase()))
 
   const toggle = (id: string) => {
@@ -113,6 +115,7 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
   const confirmingUploader = confirmId ? uploaders.find((u) => u.id === confirmId) : undefined
   const editingUploader = editId ? uploaders.find((u) => u.id === editId) : undefined
   const prioritizingUploader = prioritizeId ? uploaders.find((u) => u.id === prioritizeId) : undefined
+  const backfillingUploader = backfillId ? uploaders.find((u) => u.id === backfillId) : undefined
 
   const handleConfirmPrioritize = async () => {
     if (!prioritizeId) return
@@ -132,6 +135,22 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
     } finally {
       setPrioritizing(false)
       setPrioritizeId(null)
+    }
+  }
+
+  const handleConfirmBackfill = async () => {
+    if (!backfillId) return
+    setBackfilling(true)
+    try {
+      const res = await uploadersApi.backfillYear(backfillId)
+      toast.success(
+        `已为「${backfillingUploader?.name || ''}」创建回溯任务（最近 ${res.days_back} 天）`
+      )
+    } catch (e: any) {
+      toast.error(e?.error?.message || '创建回溯任务失败')
+    } finally {
+      setBackfilling(false)
+      setBackfillId(null)
     }
   }
 
@@ -189,6 +208,18 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
                   <div className="text-[10px] text-muted-foreground">{u.category}</div>
                 </div>
                 <div className="flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setBackfillId(u.id)
+                    }}
+                    className="h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10"
+                    title="回溯该 UP 主最近一年的视频"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                  </button>
                   <button
                     type="button"
                     onClick={(e) => {
@@ -279,6 +310,31 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
             className="bg-amber-600 hover:bg-amber-700"
           >
             {prioritizing ? '排队中...' : '确认优先'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog open={!!backfillId} onOpenChange={(open) => !open && setBackfillId(null)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>回溯该 UP 主最近一年视频？</AlertDialogTitle>
+          <AlertDialogDescription>
+            {backfillingUploader
+              ? `将为「${backfillingUploader.name}」创建任务，拉取最近 365 天的视频。若已有进行中的回溯任务，会自动返回现有任务。`
+              : '将为该 UP 主创建任务，拉取最近 365 天的视频。'}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => setBackfillId(null)} disabled={backfilling}>
+            取消
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleConfirmBackfill}
+            disabled={backfilling}
+            className="bg-blue-600 hover:bg-blue-700"
+          >
+            {backfilling ? '创建中...' : '确认回溯'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

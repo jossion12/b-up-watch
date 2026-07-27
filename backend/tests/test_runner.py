@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.models import DEFAULT_USER_ID, Task, Uploader, Video
+from app.tasks import registry
 from app.tasks.runner import TaskRunner
 
 
@@ -162,8 +163,14 @@ async def test_runner_processes_high_priority_first(db_session_factory):
     async def _mock_dispatch(_db, task: Task) -> None:
         dispatched.append(task.task_id)
 
-    runner._dispatch = _mock_dispatch  # type: ignore[method-assign]
-
-    processed = await runner.tick()
-    assert processed == priority_id
-    assert dispatched == [priority_id]
+    original = registry._REGISTRY.get("subtitle_fetch")
+    registry._REGISTRY["subtitle_fetch"] = _mock_dispatch
+    try:
+        processed = await runner.tick()
+        assert processed == priority_id
+        assert dispatched == [priority_id]
+    finally:
+        if original is not None:
+            registry._REGISTRY["subtitle_fetch"] = original
+        else:
+            registry._REGISTRY.pop("subtitle_fetch", None)

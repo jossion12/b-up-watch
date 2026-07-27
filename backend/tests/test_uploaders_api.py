@@ -259,14 +259,15 @@ def test_prioritize_latest_enqueues_tasks(client, db_session_factory):
     assert r.status_code == 202, r.text
     body = r.json()
     assert body["enqueued_subtitle"] == 3
-    assert body["enqueued_summary"] == 3
-    assert len(body["task_ids"]) == 6
+    # AI 总结功能已暂停：不再排队总结任务
+    assert body["enqueued_summary"] == 0
+    assert len(body["task_ids"]) == 3
 
     from app.models import Task
 
     with db_session_factory() as db:
         tasks = db.query(Task).filter(Task.ref_id.in_([v.id for v in videos])).all()
-        assert len(tasks) == 6
+        assert len(tasks) == 3
         assert all(t.priority == 10 for t in tasks)
 
 
@@ -276,34 +277,82 @@ def test_prioritize_latest_skips_active_and_done(client, db_session_factory):
 
     up, videos = _make_uploader_and_videos(db_session_factory, video_count=2)
 
-    # 第一个视频：已有字幕，且已有进行中的总结任务
+    # 第一个视频：已有字幕
     with db_session_factory() as db:
         v1 = db.get(Video, videos[0].id)
         v1.has_subtitle = True
-        db.add(
-            Task(
-                task_id=uuid.uuid4().hex[:12],
-                type="ai_summary",
-                status="running",
-                progress=0,
-                ref_type="video",
-                ref_id=v1.id,
-                priority=0,
-                created_at=datetime.now(timezone.utc),
-            )
-        )
         db.commit()
 
     r = client.post(f"/api/v1/uploaders/{up.id}/prioritize-latest?count=10")
     assert r.status_code == 202, r.text
     body = r.json()
-    # v1: 跳过字幕 + 跳过总结；v2: 各一个
+    # v1: 已有字幕，跳过；v2: 一个字幕任务
+    # AI 总结功能已暂停：不再排队总结任务
     assert body["enqueued_subtitle"] == 1
-    assert body["enqueued_summary"] == 1
-    assert len(body["task_ids"]) == 2
+    assert body["enqueued_summary"] == 0
+    assert len(body["task_ids"]) == 1
 
 
 def test_prioritize_latest_404(client):
     r = client.post("/api/v1/uploaders/does_not_exist/prioritize-latest")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "UPLOADER_NOT_FOUND"
+
+
+# ---------- 回溯最近一年视频 ----------
+
+
+def test_backfill_year_creates_feed_refresh(client, db_session_factory):
+    from app.models import Task
+
+    up, _ = _make_uploader_and_videos(db_session_factory, video_count=0)
+
+    r = client.post(f"/api/v1/uploaders/{up.id}/backfill-year")
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["type"] == "feed_refresh"
+    assert body["days_back"] == 365
+
+    with db_session_factory() as db:
+        task = db.get(Task, body["task_id"])
+        assert task is not None
+        assert task.type == "feed_refresh"
+        assert task.ref_type == "uploader"
+        assert task.ref_id == up.id
+        assert task.meta.get("days_back") == 365
+        assert task.meta.get("mode") == "backfill-year"
+
+
+def test_backfill_year_returns_existing_task(client, db_session_factory):
+    from datetime import datetime, timezone
+    from app.models import Task
+
+    up, _ = _make_uploader_and_videos(db_session_factory, video_count=0)
+
+    with db_session_factory() as db:
+        existing = Task(
+            task_id=uuid.uuid4().hex[:12],
+            type="feed_refresh",
+            status="pending",
+            ref_type="uploader",
+            ref_id=up.id,
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
+
+    r = client.post(f"/api/v1/uploaders/{up.id}/backfill-year")
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["task_id"] == existing.task_id
+    assert body["days_back"] == 365
+
+    with db_session_factory() as db:
+        assert db.query(Task).filter(Task.ref_id == up.id, Task.type == "feed_refresh").count() == 1
+
+
+def test_backfill_year_404(client):
+    r = client.post("/api/v1/uploaders/does_not_exist/backfill-year")
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "UPLOADER_NOT_FOUND"

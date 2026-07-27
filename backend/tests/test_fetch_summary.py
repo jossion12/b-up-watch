@@ -99,6 +99,7 @@ def _valid_llm_json():
 
 @pytest.mark.asyncio
 async def test_summarize_video_writes_summary(db_session_factory, monkeypatch):
+    from app.errors import BizError
     db = db_session_factory()
     try:
         up = _make_uploader(db)
@@ -111,13 +112,10 @@ async def test_summarize_video_writes_summary(db_session_factory, monkeypatch):
 
         monkeypatch.setattr(fetch_summary.llm_client, "chat", fake_chat)
 
-        summary = await fetch_summary.summarize_video(db, v)
-        assert summary.brief == "本视频讨论 AI Agent 现状"
-        assert summary.template_id == "tpl_test"
-        assert summary.token_usage["prompt"] == 100
-        db.refresh(v)
-        assert v.has_summary is True
-        assert v.status == "summarized"
+        # AI 总结功能已暂停
+        with pytest.raises(BizError) as excinfo:
+            await fetch_summary.summarize_video(db, v)
+        assert excinfo.value.code == "AI_SUMMARY_DISABLED"
     finally:
         db.close()
 
@@ -133,7 +131,8 @@ async def test_summarize_video_missing_subtitle(db_session_factory):
         _make_template(db)
         with pytest.raises(BizError) as excinfo:
             await fetch_summary.summarize_video(db, v)
-        assert excinfo.value.code == "SUBTITLE_UNAVAILABLE"
+        # AI 总结功能已暂停：优先返回禁用错误
+        assert excinfo.value.code == "AI_SUMMARY_DISABLED"
     finally:
         db.close()
 
@@ -153,12 +152,10 @@ async def test_summarize_video_bad_llm_json(db_session_factory, monkeypatch):
 
         monkeypatch.setattr(fetch_summary.llm_client, "chat", fake_chat)
 
+        # AI 总结功能已暂停：直接返回禁用错误，不再调用 LLM 校验
         with pytest.raises(BizError) as excinfo:
             await fetch_summary.summarize_video(db, v)
-        assert excinfo.value.code == "SUMMARY_BAD_OUTPUT"
-
-        db.refresh(v)
-        assert v.status == "failed"
+        assert excinfo.value.code == "AI_SUMMARY_DISABLED"
     finally:
         db.close()
 

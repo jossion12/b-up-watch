@@ -6,15 +6,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { tasksApi, type BackendTask } from '@/lib/api'
-import type { Uploader, Video } from '@/types'
-
-const TASK_TYPE_LABEL: Record<string, string> = {
-  subtitle_fetch: '字幕抓取',
-  whisper_transcribe: 'Whisper 转写',
-  ai_summary: 'AI 总结',
-  feed_refresh: '刷新订阅',
-  video_stats_refresh: '数据更新',
-}
 
 const TASK_TYPE_ICON: Record<string, React.ElementType> = {
   subtitle_fetch: Film,
@@ -24,12 +15,7 @@ const TASK_TYPE_ICON: Record<string, React.ElementType> = {
   video_stats_refresh: RefreshCw,
 }
 
-interface FailedTasksProps {
-  videos: Video[]
-  uploaders: Uploader[]
-}
-
-export default function FailedTasks({ videos, uploaders }: FailedTasksProps) {
+export default function FailedTasks() {
   const navigate = useNavigate()
   const [tasks, setTasks] = useState<BackendTask[]>([])
   const [loading, setLoading] = useState(true)
@@ -55,25 +41,12 @@ export default function FailedTasks({ videos, uploaders }: FailedTasksProps) {
     return () => clearInterval(id)
   }, [])
 
-  const resolveRefTitle = (task: BackendTask): string | null => {
-    if (!task.ref_id) return null
-    if (task.ref_type === 'video') {
-      const v = videos.find((x) => x.id === task.ref_id)
-      return v?.title || null
-    }
-    if (task.ref_type === 'uploader') {
-      const u = uploaders.find((x) => x.id === task.ref_id)
-      return u?.name || null
-    }
-    return null
-  }
-
   const handleRetry = async (task: BackendTask) => {
     setRetrying((prev) => ({ ...prev, [task.task_id]: true }))
     try {
       await tasksApi.retry(task.task_id)
       setTasks((prev) => prev.filter((t) => t.task_id !== task.task_id))
-      setLastAction(`已重新执行：${TASK_TYPE_LABEL[task.type] || task.type}`)
+      setLastAction(`已重新执行：${task.operation_label}`)
       setTimeout(() => setLastAction((cur) => (cur ? null : cur)), 3000)
     } catch (e: any) {
       setError(e?.error?.message || '重试失败')
@@ -83,7 +56,10 @@ export default function FailedTasks({ videos, uploaders }: FailedTasksProps) {
   }
 
   const sortedTasks = useMemo(
-    () => [...tasks].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)),
+    () =>
+      [...tasks]
+        .filter((t) => t.type !== 'ai_summary')
+        .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)),
     [tasks]
   )
 
@@ -127,14 +103,13 @@ export default function FailedTasks({ videos, uploaders }: FailedTasksProps) {
                   <div className="divide-y">
                     {sortedTasks.map((task) => {
                       const Icon = TASK_TYPE_ICON[task.type] || RefreshCw
-                      const title = resolveRefTitle(task)
                       return (
                         <div key={task.task_id} className="p-4 space-y-3 hover:bg-muted/40 transition-colors">
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex items-center gap-2 min-w-0">
                               <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
                               <span className="text-sm font-medium truncate">
-                                {TASK_TYPE_LABEL[task.type] || task.type}
+                                {task.operation_label}
                               </span>
                               <Badge variant="destructive" className="shrink-0 text-[10px]">
                                 失败
@@ -156,10 +131,10 @@ export default function FailedTasks({ videos, uploaders }: FailedTasksProps) {
                             </Button>
                           </div>
 
-                          {title && (
-                            <p className="text-xs text-muted-foreground line-clamp-2" title={title}>
+                          {task.ref_title && (
+                            <p className="text-xs text-muted-foreground line-clamp-2" title={task.ref_title}>
                               {task.ref_type === 'uploader' ? 'UP主：' : '视频：'}
-                              {title}
+                              {task.ref_title}
                             </p>
                           )}
 

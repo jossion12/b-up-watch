@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Activity, ArrowLeft, Loader2, Clock, Film, Sparkles, Flame } from 'lucide-react'
+import { Activity, ArrowLeft, Loader2, Clock, Film, Flame } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Progress } from '@/components/ui/progress'
@@ -8,12 +8,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { jobsApi, tasksApi, type JobItem, type BackendTask, type TaskStatsOut } from '@/lib/api'
-import type { Uploader, Video } from '@/types'
 
 const JOB_ICONS: Record<string, string> = {
   subtitle: '📝',
   summary: '✨',
-  backfill: '📚',
 }
 
 const TASK_STATUS_LABEL: Record<string, string> = {
@@ -23,20 +21,7 @@ const TASK_STATUS_LABEL: Record<string, string> = {
   failed: '失败',
 }
 
-const TASK_TYPE_LABEL: Record<string, string> = {
-  subtitle_fetch: '字幕抓取',
-  whisper_transcribe: 'Whisper 转写',
-  ai_summary: 'AI 总结',
-  feed_refresh: '刷新订阅',
-  video_stats_refresh: '数据更新',
-}
-
-interface JobsProps {
-  videos: Video[]
-  uploaders: Uploader[]
-}
-
-export default function Jobs({ videos, uploaders }: JobsProps) {
+export default function Jobs() {
   const navigate = useNavigate()
   const [jobs, setJobs] = useState<JobItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -113,20 +98,8 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
     () => tasks.filter((t) => t.type === 'subtitle_fetch' || t.type === 'whisper_transcribe'),
     [tasks]
   )
-  const summaryTasks = useMemo(() => tasks.filter((t) => t.type === 'ai_summary'), [tasks])
-
-  const resolveRefTitle = (task: BackendTask): string | null => {
-    if (!task.ref_id) return null
-    if (task.ref_type === 'video') {
-      const v = videos.find((x) => x.id === task.ref_id)
-      return v?.title || null
-    }
-    if (task.ref_type === 'uploader') {
-      const u = uploaders.find((x) => x.id === task.ref_id)
-      return u?.name || null
-    }
-    return null
-  }
+  // AI 总结功能已暂停：不再展示总结队列
+  // const summaryTasks = useMemo(() => tasks.filter((t) => t.type === 'ai_summary'), [tasks])
 
   const QueueCard = ({
     icon: Icon,
@@ -161,49 +134,46 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
         ) : (
           <ScrollArea className="h-[360px] px-6 pb-6">
             <div className="space-y-3 pt-1">
-              {tasks.map((task) => {
-                const title = resolveRefTitle(task)
-                return (
-                  <div
-                    key={task.task_id}
-                    className="rounded-lg border bg-card p-3 space-y-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Badge
-                          variant={task.status === 'running' ? 'default' : 'outline'}
-                          className="shrink-0 text-xs"
-                        >
-                          {TASK_STATUS_LABEL[task.status] || task.status}
-                        </Badge>
-                        <span className="text-sm truncate" title={TASK_TYPE_LABEL[task.type] || task.type}>
-                          {TASK_TYPE_LABEL[task.type] || task.type}
-                        </span>
-                        {task.priority > 0 && (
-                          <Badge className="gap-0.5 bg-amber-500/10 text-amber-600 border-amber-200 hover:bg-amber-500/10 text-[10px] px-1">
-                            <Flame className="h-2.5 w-2.5" /> 优先
-                          </Badge>
-                        )}
-                      </div>
-                      <span className="text-xs text-muted-foreground shrink-0">
-                        {task.progress}%
+              {tasks.map((task) => (
+                <div
+                  key={task.task_id}
+                  className="rounded-lg border bg-card p-3 space-y-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Badge
+                        variant={task.status === 'running' ? 'default' : 'outline'}
+                        className="shrink-0 text-xs"
+                      >
+                        {TASK_STATUS_LABEL[task.status] || task.status}
+                      </Badge>
+                      <span className="text-sm truncate" title={task.operation_label}>
+                        {task.operation_label}
                       </span>
+                      {task.priority > 0 && (
+                        <Badge className="gap-0.5 bg-amber-500/10 text-amber-600 border-amber-200 hover:bg-amber-500/10 text-[10px] px-1">
+                          <Flame className="h-2.5 w-2.5" /> 优先
+                        </Badge>
+                      )}
                     </div>
-                    {title && (
-                      <p className="text-xs text-muted-foreground line-clamp-2" title={title}>
-                        {title}
-                      </p>
-                    )}
-                    {task.status === 'running' && (
-                      <Progress value={task.progress} className="h-1.5" />
-                    )}
-                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      {new Date(task.created_at).toLocaleString('zh-CN')}
-                    </div>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {task.progress}%
+                    </span>
                   </div>
-                )
-              })}
+                  {task.ref_title && (
+                    <p className="text-xs text-muted-foreground line-clamp-2" title={task.ref_title}>
+                      {task.ref_title}
+                    </p>
+                  )}
+                  {task.status === 'running' && (
+                    <Progress value={task.progress} className="h-1.5" />
+                  )}
+                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <Clock className="h-3 w-3" />
+                    {new Date(task.created_at).toLocaleString('zh-CN')}
+                  </div>
+                </div>
+              ))}
             </div>
           </ScrollArea>
         )}
@@ -234,8 +204,8 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
               <Loader2 className="h-4 w-4 animate-spin mr-2" /> 加载中...
             </div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-3">
-              {jobs.map((job) => (
+            <div className="grid gap-4 md:grid-cols-2">
+              {jobs.filter((job) => job.name !== 'summary').map((job) => (
                 <Card key={job.name} className={job.enabled ? '' : 'opacity-80'}>
                   <CardHeader>
                     <div className="flex items-start justify-between">
@@ -286,7 +256,7 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
           )}
 
           {/* 任务统计 */}
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-1">
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center gap-2">
@@ -339,7 +309,8 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
                 </div>
               </CardContent>
             </Card>
-            <Card>
+            {/* AI 总结功能已暂停：隐藏总结统计 */}
+            {/* <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-amber-500" />
@@ -390,11 +361,11 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
                   </div>
                 </div>
               </CardContent>
-            </Card>
+            </Card> */}
           </div>
 
           {/* 待执行队列 */}
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-1">
             <QueueCard
               icon={Film}
               title="字幕抓取队列"
@@ -402,13 +373,14 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
               emptyText="暂无字幕相关任务"
               accent="text-blue-500"
             />
-            <QueueCard
+            {/* AI 总结功能已暂停：隐藏总结队列 */}
+            {/* <QueueCard
               icon={Sparkles}
               title="AI 总结队列"
               tasks={summaryTasks}
               emptyText="暂无 AI 总结任务"
               accent="text-amber-500"
-            />
+            /> */}
           </div>
         </div>
       </main>

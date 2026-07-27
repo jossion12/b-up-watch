@@ -11,8 +11,24 @@ import pytest
 import respx
 
 from app.bilibili import subtitle as bili_sub
+from app.bilibili import wbi
 from app.collect.fetch_subtitle import fetch_video_subtitle
 from app.models import Subtitle, Task, Uploader, Video
+
+
+def _mock_wbi_nav() -> None:
+    """为 WBI 签名提供固定的 nav key，避免测试走真实网络。"""
+    respx.get("https://api.bilibili.com/x/web-interface/nav").mock(
+        return_value=httpx.Response(200, json={
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077f.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+                }
+            },
+        })
+    )
 
 
 # ============== 纯函数 ==============
@@ -41,6 +57,35 @@ def test_pick_preferred_unknown_ai_type():
     tracks = [{"id": 9, "subtitle_url": "//x.json"}]
     picked = bili_sub.pick_preferred_subtitle(tracks)
     assert picked["id"] == 9
+
+
+def test_pick_preferred_skips_empty_url():
+    """URL 为空或仅空白时视为无效，应被跳过。"""
+    tracks = [
+        {"id": 1, "ai_type": 0, "subtitle_url": "", "lan": "zh-CN"},
+        {"id": 2, "ai_type": 1, "subtitle_url": "//x/ai.json", "lan": "zh-CN"},
+    ]
+    picked = bili_sub.pick_preferred_subtitle(tracks)
+    assert picked["id"] == 2
+
+
+def test_pick_preferred_all_empty_url_returns_none():
+    """所有轨道 URL 都为空时返回 None，触发上层 fallback。"""
+    tracks = [
+        {"id": 1, "ai_type": 0, "subtitle_url": "", "lan": "zh-CN"},
+        {"id": 2, "ai_type": 1, "subtitle_url": "   ", "lan": "zh-CN"},
+    ]
+    assert bili_sub.pick_preferred_subtitle(tracks) is None
+
+
+@pytest.mark.asyncio
+async def test_download_subtitle_json_empty_url_raises():
+    """空 URL 应直接抛 INVALID_SUBTITLE_URL，而不是生成 https://。"""
+    from app.errors import BizError
+
+    with pytest.raises(BizError) as ei:
+        await bili_sub.download_subtitle_json("")
+    assert ei.value.code == "INVALID_SUBTITLE_URL"
 
 
 @respx.mock
@@ -120,6 +165,47 @@ def test_check_subtitle_duration_ok():
     _check_subtitle_duration(lines, video_duration_sec=60)
 
 
+# ============== 本地归档 ==============
+
+def test_sanitize_filename():
+    from app.collect.fetch_subtitle import _sanitize_filename
+
+    assert _sanitize_filename("hello/world") == "hello_world"
+    assert _sanitize_filename('a:b*c?d"e<f>g|h') == "a_b_c_d_e_f_g_h"
+    assert _sanitize_filename("  __test__  ") == "test"
+    assert _sanitize_filename("") == "untitled"
+
+
+def test_subtitle_to_markdown():
+    from app.collect.fetch_subtitle import _subtitle_to_markdown
+
+    lines = [
+        {"start_sec": 0.0, "end_sec": 3.5, "text": "第一句"},
+        {"start_sec": 3.5, "end_sec": 7.25, "text": "第二句"},
+    ]
+    md = _subtitle_to_markdown(lines)
+    assert "[00:00.000 -> 00:03.500] 第一句" in md
+    assert "[00:03.500 -> 00:07.250] 第二句" in md
+
+
+def test_subtitle_file_path():
+    from app.collect.fetch_subtitle import _subtitle_file_path
+
+    up = Uploader(id="u1", user_id="default", bilibili_uid="1", name="A/B", unread_count=0, notify_enabled=True)
+    v = Video(
+        id="v1", user_id="default", bvid="BV1", uploader_id="u1",
+        title='hello:world?', cover_url=None, duration_sec=60,
+        published_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        views=0, danmaku_count=0, likes=0, tags=[],
+        status="new", has_subtitle=False, has_summary=False, is_read=False,
+    )
+    v.uploader = up
+
+    path = _subtitle_file_path(v)
+    assert path.name == "20240601-hello_world.md"
+    assert path.parent.name == "A_B"
+
+
 @pytest.mark.asyncio
 async def test_fetch_video_subtitle_mismatch_not_persisted(db_session_factory, monkeypatch):
     from app.collect.fetch_subtitle import fetch_video_subtitle
@@ -163,14 +249,15 @@ async def test_fetch_video_subtitle_mismatch_not_persisted(db_session_factory, m
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_fetch_video_subtitle_uploader_source(db_session_factory):
+async def test_fetch_video_subtitle_uploader_source(db_session_factory, reset_wbi_cache, subtitle_data_dir):
+    _mock_wbi_nav()
     respx.get("https://api.bilibili.com/x/web-interface/view").mock(
         return_value=httpx.Response(200, json={
             "code": 0,
             "data": {"cid": 12345, "stat": {"like": 799}},
         })
     )
-    respx.get("https://api.bilibili.com/x/player/v2").mock(
+    respx.get("https://api.bilibili.com/x/player/wbi/v2").mock(
         return_value=httpx.Response(200, json={
             "code": 0,
             "data": {"subtitle": {"subtitles": [
@@ -188,10 +275,11 @@ async def test_fetch_video_subtitle_uploader_source(db_session_factory):
     with db_session_factory() as db:
         up = Uploader(id="u1", user_id="default", bilibili_uid="1", name="A", unread_count=0, notify_enabled=True)
         db.add(up)
+        published_at = datetime(2024, 1, 15, tzinfo=timezone.utc)
         v = Video(
             id="v1", user_id="default", bvid="BV1sub01", uploader_id="u1",
-            title="t", cover_url=None, duration_sec=60,
-            published_at=datetime.now(timezone.utc),
+            title="test video", cover_url=None, duration_sec=60,
+            published_at=published_at,
             views=0, danmaku_count=0, likes=0, tags=[],
             status="new", has_subtitle=False, has_summary=False, is_read=False,
         )
@@ -210,14 +298,20 @@ async def test_fetch_video_subtitle_uploader_source(db_session_factory):
         assert v.status == "subtitled"
         assert v.likes == 799  # 从 view 接口 stat.like 回填
 
+    # 验证本地归档：data/{up主名称}/YYYYMMDD-{视频名称}.md
+    expected_file = subtitle_data_dir / "A" / "20240115-test_video.md"
+    assert expected_file.exists()
+    assert "上传字幕测试" in expected_file.read_text(encoding="utf-8")
+
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_fetch_video_subtitle_falls_back_to_ai(db_session_factory):
+async def test_fetch_video_subtitle_falls_back_to_ai(db_session_factory, reset_wbi_cache):
+    _mock_wbi_nav()
     respx.get("https://api.bilibili.com/x/web-interface/view").mock(
         return_value=httpx.Response(200, json={"code": 0, "data": {"cid": 99}})
     )
-    respx.get("https://api.bilibili.com/x/player/v2").mock(
+    respx.get("https://api.bilibili.com/x/player/wbi/v2").mock(
         return_value=httpx.Response(200, json={
             "code": 0,
             "data": {"subtitle": {"subtitles": [
@@ -251,13 +345,14 @@ async def test_fetch_video_subtitle_falls_back_to_ai(db_session_factory):
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_fetch_video_subtitle_no_tracks_returns_unavailable(db_session_factory):
+async def test_fetch_video_subtitle_no_tracks_returns_unavailable(db_session_factory, reset_wbi_cache):
     from app.errors import BizError
 
+    _mock_wbi_nav()
     respx.get("https://api.bilibili.com/x/web-interface/view").mock(
         return_value=httpx.Response(200, json={"code": 0, "data": {"cid": 99}})
     )
-    respx.get("https://api.bilibili.com/x/player/v2").mock(
+    respx.get("https://api.bilibili.com/x/player/wbi/v2").mock(
         return_value=httpx.Response(200, json={"code": 0, "data": {"subtitle": {"subtitles": []}}})
     )
 
@@ -282,11 +377,12 @@ async def test_fetch_video_subtitle_no_tracks_returns_unavailable(db_session_fac
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_runner_subtitle_fetch_end_to_end(db_session_factory):
+async def test_runner_subtitle_fetch_end_to_end(db_session_factory, reset_wbi_cache):
+    _mock_wbi_nav()
     respx.get("https://api.bilibili.com/x/web-interface/view").mock(
         return_value=httpx.Response(200, json={"code": 0, "data": {"cid": 1}})
     )
-    respx.get("https://api.bilibili.com/x/player/v2").mock(
+    respx.get("https://api.bilibili.com/x/player/wbi/v2").mock(
         return_value=httpx.Response(200, json={
             "code": 0,
             "data": {"subtitle": {"subtitles": [

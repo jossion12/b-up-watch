@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -91,3 +93,15 @@ def reset_wbi_cache():
     wbi.reset_for_test()
     yield
     wbi.reset_for_test()
+
+
+@pytest.fixture()
+def subtitle_data_dir(tmp_path: Path, monkeypatch) -> Iterator[Path]:
+    """将字幕归档目录重定向到临时目录，避免测试污染 data/。"""
+    import app.collect.fetch_subtitle as fetch_mod
+
+    original = fetch_mod._SUBTITLE_DATA_DIR
+    target = tmp_path / "subtitles"
+    monkeypatch.setattr(fetch_mod, "_SUBTITLE_DATA_DIR", target)
+    yield target
+    shutil.rmtree(target, ignore_errors=True)

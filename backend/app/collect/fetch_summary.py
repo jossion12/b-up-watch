@@ -52,128 +52,131 @@ async def summarize_video(
     model: str | None = None,
 ) -> Summary:
     """对单个视频生成总结。前提：字幕已就绪。"""
-    if video.user_id != DEFAULT_USER_ID:
-        raise BizError("VIDEO_NOT_FOUND", "视频不存在", http_status=404)
+    # AI 总结功能已暂停
+    raise BizError("AI_SUMMARY_DISABLED", "AI 总结功能已暂停", http_status=503)
 
-    # 字幕检查（缺则抛 SUBTITLE_UNAVAILABLE）
-    sub = db.get(Subtitle, video.id)
-    if sub is None:
-        raise BizError(
-            "SUBTITLE_UNAVAILABLE",
-            "该视频尚无字幕，请先获取字幕",
-            http_status=422,
-        )
+    # if video.user_id != DEFAULT_USER_ID:
+    #     raise BizError("VIDEO_NOT_FOUND", "视频不存在", http_status=404)
 
-    # 状态：new/subtitled → summarizing
-    video.status = "summarizing"
-    db.commit()
+    # # 字幕检查（缺则抛 SUBTITLE_UNAVAILABLE）
+    # sub = db.get(Subtitle, video.id)
+    # if sub is None:
+    #     raise BizError(
+    #         "SUBTITLE_UNAVAILABLE",
+    #         "该视频尚无字幕，请先获取字幕",
+    #         http_status=422,
+    #     )
 
-    template = _get_template(db, template_id)
-    subtitle_text = "\n".join((ln.get("text") or "") for ln in (sub.lines or []))
-    variables = {
-        "title": video.title or "",
-        "uploader": video.uploader.name if video.uploader else "",
-        "duration": _format_duration(video.duration_sec),
-        "tags": _format_tags(video.tags or []),
-        "subtitle": subtitle_text,
-    }
+    # # 状态：new/subtitled → summarizing
+    # video.status = "summarizing"
+    # db.commit()
 
-    try:
-        rendered = llm_prompts.render_template(template.prompt, variables)
-    except llm_prompts.TemplateError as e:
-        raise BizError("TEMPLATE_RENDER_FAILED", str(e), http_status=500) from e
+    # template = _get_template(db, template_id)
+    # subtitle_text = "\n".join((ln.get("text") or "") for ln in (sub.lines or []))
+    # variables = {
+    #     "title": video.title or "",
+    #     "uploader": video.uploader.name if video.uploader else "",
+    #     "duration": _format_duration(video.duration_sec),
+    #     "tags": _format_tags(video.tags or []),
+    #     "subtitle": subtitle_text,
+    # }
 
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "你是视频内容分析助手。请严格只输出一个合法的 JSON 对象，"
-                "不要添加任何解释、markdown 代码块（如 ```json）或其他额外文本。\n\n"
-                "输出必须包含以下字段，且不允许为空：\n"
-                '- "brief": 字符串，150字内摘要\n'
-                '- "points": 字符串数组，3-5条要点\n'
-                '- "stance": 对象，包含:\n'
-                '  - "label": 字符串，观点标签，不能为空\n'
-                '  - "sentiment": 字符串，必须是 positive/neutral/negative/mixed 四选一\n'
-                '  - "detail": 字符串，观点详细阐述\n'
-                '- "topics": 字符串数组，3-5个话题标签\n'
-                '- "quote": 字符串，一句代表性引用\n'
-            ),
-        },
-        {"role": "user", "content": rendered},
-    ]
+    # try:
+    #     rendered = llm_prompts.render_template(template.prompt, variables)
+    # except llm_prompts.TemplateError as e:
+    #     raise BizError("TEMPLATE_RENDER_FAILED", str(e), http_status=500) from e
 
-    try:
-        parsed, usage = await llm_client.chat(messages, model=model)
-        obj = llm_prompts.validate_summary_output(parsed)
-    except BizError:
-        video.status = "failed"
-        db.commit()
-        raise
-    except llm_prompts.TemplateError as e:
-        video.status = "failed"
-        db.commit()
-        raise BizError("SUMMARY_BAD_OUTPUT", f"LLM 输出不符合契约: {e}", http_status=502) from e
+    # messages = [
+    #     {
+    #         "role": "system",
+    #         "content": (
+    #             "你是视频内容分析助手。请严格只输出一个合法的 JSON 对象，"
+    #             "不要添加任何解释、markdown 代码块（如 ```json）或其他额外文本。\n\n"
+    #             "输出必须包含以下字段，且不允许为空：\n"
+    #             '- "brief": 字符串，150字内摘要\n'
+    #             '- "points": 字符串数组，3-5条要点\n'
+    #             '- "stance": 对象，包含:\n'
+    #             '  - "label": 字符串，观点标签，不能为空\n'
+    #             '  - "sentiment": 字符串，必须是 positive/neutral/negative/mixed 四选一\n'
+    #             '  - "detail": 字符串，观点详细阐述\n'
+    #             '- "topics": 字符串数组，3-5个话题标签\n'
+    #             '- "quote": 字符串，一句代表性引用\n'
+    #         ),
+    #     },
+    #     {"role": "user", "content": rendered},
+    # ]
 
-    token_usage = {
-        "prompt": int(usage.get("prompt_tokens") or 0),
-        "completion": int(usage.get("completion_tokens") or 0),
-    }
+    # try:
+    #     parsed, usage = await llm_client.chat(messages, model=model)
+    #     obj = llm_prompts.validate_summary_output(parsed)
+    # except BizError:
+    #     video.status = "failed"
+    #     db.commit()
+    #     raise
+    # except llm_prompts.TemplateError as e:
+    #     video.status = "failed"
+    #     db.commit()
+    #     raise BizError("SUMMARY_BAD_OUTPUT", f"LLM 输出不符合契约: {e}", http_status=502) from e
 
-    summary = db.get(Summary, video.id)
-    if summary is None:
-        summary = Summary(
-            video_id=video.id,
-            template_id=template.id,
-            brief=obj["brief"],
-            points=list(obj["points"]),
-            stance={
-                "label": obj["stance"]["label"],
-                "sentiment": obj["stance"]["sentiment"],
-                "detail": obj["stance"]["detail"],
-            },
-            topics=list(obj["topics"]),
-            quote=obj["quote"],
-            model=model or (db.get(SystemConfig, 1).summary_model if db.get(SystemConfig, 1) else None),
-            token_usage=token_usage,
-            created_at=datetime.now(timezone.utc),
-        )
-        db.add(summary)
-    else:
-        summary.template_id = template.id
-        summary.brief = obj["brief"]
-        summary.points = list(obj["points"])
-        summary.stance = {
-            "label": obj["stance"]["label"],
-            "sentiment": obj["stance"]["sentiment"],
-            "detail": obj["stance"]["detail"],
-        }
-        summary.topics = list(obj["topics"])
-        summary.quote = obj["quote"]
-        summary.model = model or summary.model
-        summary.token_usage = token_usage
-        summary.created_at = datetime.now(timezone.utc)
+    # token_usage = {
+    #     "prompt": int(usage.get("prompt_tokens") or 0),
+    #     "completion": int(usage.get("completion_tokens") or 0),
+    # }
 
-    video.has_summary = True
-    video.status = "summarized"
-    db.commit()
-    log.info("summarized video %s using template %s", video.bvid, template.id)
+    # summary = db.get(Summary, video.id)
+    # if summary is None:
+    #     summary = Summary(
+    #         video_id=video.id,
+    #         template_id=template.id,
+    #         brief=obj["brief"],
+    #         points=list(obj["points"]),
+    #         stance={
+    #             "label": obj["stance"]["label"],
+    #             "sentiment": obj["stance"]["sentiment"],
+    #             "detail": obj["stance"]["detail"],
+    #         },
+    #         topics=list(obj["topics"]),
+    #         quote=obj["quote"],
+    #         model=model or (db.get(SystemConfig, 1).summary_model if db.get(SystemConfig, 1) else None),
+    #         token_usage=token_usage,
+    #         created_at=datetime.now(timezone.utc),
+    #     )
+    #     db.add(summary)
+    # else:
+    #     summary.template_id = template.id
+    #     summary.brief = obj["brief"]
+    #     summary.points = list(obj["points"])
+    #     summary.stance = {
+    #         "label": obj["stance"]["label"],
+    #         "sentiment": obj["stance"]["sentiment"],
+    #         "detail": obj["stance"]["detail"],
+    #     }
+    #     summary.topics = list(obj["topics"])
+    #     summary.quote = obj["quote"]
+    #     summary.model = model or summary.model
+    #     summary.token_usage = token_usage
+    #     summary.created_at = datetime.now(timezone.utc)
 
-    # 增量更新洞察聚合表
-    update_insights_for_summary(db, video, summary)
+    # video.has_summary = True
+    # video.status = "summarized"
+    # db.commit()
+    # log.info("summarized video %s using template %s", video.bvid, template.id)
 
-    # WebSocket 推送：总结完成
-    push_summary_completed_sync(video.id, {
-        "video_id": summary.video_id,
-        "template_id": summary.template_id,
-        "brief": summary.brief,
-        "points": summary.points or [],
-        "stance": summary.stance or {},
-        "topics": summary.topics or [],
-        "quote": summary.quote,
-        "model": summary.model,
-        "token_usage": summary.token_usage or {},
-        "created_at": summary.created_at,
-    })
+    # # 增量更新洞察聚合表
+    # update_insights_for_summary(db, video, summary)
 
-    return summary
+    # # WebSocket 推送：总结完成
+    # push_summary_completed_sync(video.id, {
+    #     "video_id": summary.video_id,
+    #     "template_id": summary.template_id,
+    #     "brief": summary.brief,
+    #     "points": summary.points or [],
+    #     "stance": summary.stance or {},
+    #     "topics": summary.topics or [],
+    #     "quote": summary.quote,
+    #     "model": summary.model,
+    #     "token_usage": summary.token_usage or {},
+    #     "created_at": summary.created_at,
+    # })
+
+    # return summary

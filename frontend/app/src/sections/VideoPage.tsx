@@ -1,34 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import {
-  Play, Eye, MessageSquare, ThumbsUp, FileText, Sparkles,
-  Loader2, Check, Quote, Lightbulb, MessageCircle, Tags, ExternalLink,
+  Play, Eye, MessageSquare, ThumbsUp, FileText,
+  Loader2, Check, ExternalLink,
   ArrowLeft, Tv, Download, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
-import { videosApi, subtitlesApi, summariesApi, tasksApi, uploadersApi } from '@/lib/api'
-import { mapVideo, mapSummary, mapSubtitles, pickColor } from '@/lib/format'
-import type { Video, Uploader, VideoSummary, SubtitleLine } from '@/types'
+import { videosApi, subtitlesApi, tasksApi, uploadersApi } from '@/lib/api'
+import { mapVideo, mapSubtitles, pickColor } from '@/lib/format'
+import type { Video, Uploader, SubtitleLine } from '@/types'
 import type { BackendVideoDetail, BackendTask } from '@/lib/api'
 
 interface Props {
   videos: Video[]
   uploaders: Uploader[]
   onDownloadVideo: (id: string) => void
-  onSummarized: (id: string) => void
+  // AI 总结功能已暂停
+  onSummarized?: (id: string) => void
 }
 
-const SENTIMENT_STYLE: Record<string, { cls: string; label: string }> = {
-  positive: { cls: 'bg-emerald-500/10 text-emerald-600 border-emerald-200', label: '积极' },
-  negative: { cls: 'bg-red-500/10 text-red-600 border-red-200', label: '消极' },
-  neutral: { cls: 'bg-slate-500/10 text-slate-600 border-slate-200', label: '中立' },
-  mixed: { cls: 'bg-amber-500/10 text-amber-600 border-amber-200', label: '复杂' },
-}
+// AI 总结功能已暂停：情感样式暂时不用
+// const SENTIMENT_STYLE: Record<string, { cls: string; label: string }> = {
+//   positive: { cls: 'bg-emerald-500/10 text-emerald-600 border-emerald-200', label: '积极' },
+//   negative: { cls: 'bg-red-500/10 text-red-600 border-red-200', label: '消极' },
+//   neutral: { cls: 'bg-slate-500/10 text-slate-600 border-slate-200', label: '中立' },
+//   mixed: { cls: 'bg-amber-500/10 text-amber-600 border-amber-200', label: '复杂' },
+// }
 
 function useTaskPoller(taskId: string | null, onSuccess: () => void, onFailed?: (t: BackendTask) => void) {
   const callbacks = useRef({ onSuccess, onFailed })
@@ -61,7 +61,7 @@ function useTaskPoller(taskId: string | null, onSuccess: () => void, onFailed?: 
   }, [taskId])
 }
 
-export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo, onSummarized }: Props) {
+export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo, onSummarized: _onSummarized }: Props) {
   const { id } = useParams()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
@@ -70,14 +70,15 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
   const [up, setUp] = useState<Uploader | null>(null)
 
   const [subtitleTaskId, setSubtitleTaskId] = useState<string | null>(null)
-  const [summaryTaskId, setSummaryTaskId] = useState<string | null>(null)
+  // AI 总结功能已暂停
+  // const [summaryTaskId, setSummaryTaskId] = useState<string | null>(null)
   const [subtitleLoading, setSubtitleLoading] = useState(false)
-  const [summaryLoading, setSummaryLoading] = useState(false)
+  // const [summaryLoading, setSummaryLoading] = useState(false)
   const [subtitleError, setSubtitleError] = useState<string | null>(null)
-  const [summaryError, setSummaryError] = useState<string | null>(null)
+  // const [summaryError, setSummaryError] = useState<string | null>(null)
   const [prioritizeLoading, setPrioritizeLoading] = useState(false)
 
-  const [summary, setSummary] = useState<VideoSummary | null>(null)
+  // const [summary, setSummary] = useState<VideoSummary | null>(null)
   const [subtitles, setSubtitles] = useState<SubtitleLine[]>([])
 
   const fetchVideo = async () => {
@@ -109,14 +110,15 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
           // ignore
         }
       }
-      if (detail.has_summary) {
-        try {
-          const s = await summariesApi.get(id)
-          setSummary(mapSummary(s))
-        } catch {
-          // ignore
-        }
-      }
+      // AI 总结功能已暂停：不再加载总结数据
+      // if (detail.has_summary) {
+      //   try {
+      //     const s = await summariesApi.get(id)
+      //     setSummary(mapSummary(s))
+      //   } catch {
+      //     // ignore
+      //   }
+      // }
     } catch (e: any) {
       setError(e?.error?.message || '加载视频失败')
     } finally {
@@ -139,16 +141,17 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
     setSubtitleError(t.error?.message || '获取字幕失败')
   })
 
-  useTaskPoller(summaryTaskId, () => {
-    setSummaryLoading(false)
-    setSummaryTaskId(null)
-    fetchVideo()
-    if (id) onSummarized(id)
-  }, (t) => {
-    setSummaryLoading(false)
-    setSummaryTaskId(null)
-    setSummaryError(t.error?.message || '生成总结失败')
-  })
+  // AI 总结功能已暂停：不再轮询总结任务
+  // useTaskPoller(summaryTaskId, () => {
+  //   setSummaryLoading(false)
+  //   setSummaryTaskId(null)
+  //   fetchVideo()
+  //   if (id) onSummarized(id)
+  // }, (t) => {
+  //   setSummaryLoading(false)
+  //   setSummaryTaskId(null)
+  //   setSummaryError(t.error?.message || '生成总结失败')
+  // })
 
   const handleFetchSubtitle = async () => {
     if (!id) return
@@ -168,18 +171,19 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
     subtitlesApi.export(id, format)
   }
 
-  const handleSummarize = async () => {
-    if (!id) return
-    setSummaryLoading(true)
-    setSummaryError(null)
-    try {
-      const res = await summariesApi.create(id, undefined, undefined, true)
-      setSummaryTaskId(res.task_id)
-    } catch (e: any) {
-      setSummaryError(e?.error?.message || '生成总结失败')
-      setSummaryLoading(false)
-    }
-  }
+  // AI 总结功能已暂停：不再提供生成总结入口
+  // const handleSummarize = async () => {
+  //   if (!id) return
+  //   setSummaryLoading(true)
+  //   setSummaryError(null)
+  //   try {
+  //     const res = await summariesApi.create(id, undefined, undefined, true)
+  //     setSummaryTaskId(res.task_id)
+  //   } catch (e: any) {
+  //     setSummaryError(e?.error?.message || '生成总结失败')
+  //     setSummaryLoading(false)
+  //   }
+  // }
 
   const handlePrioritizeUploader = async () => {
     if (!up) return
@@ -220,9 +224,10 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
     )
   }
 
-  const sentiment = summary ? SENTIMENT_STYLE[summary.stance.sentiment] : null
+  // AI 总结功能已暂停
+  // const sentiment = summary ? SENTIMENT_STYLE[summary.stance.sentiment] : null
   const hasSubtitle = subtitles.length > 0
-  const hasSummary = !!summary
+  // const hasSummary = !!summary
 
   return (
     <div className="min-h-screen bg-background">
@@ -330,20 +335,22 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
               </Button>
             </>
           )}
-          <Button onClick={handleSummarize} disabled={summaryLoading} className="gap-1.5">
+          {/* AI 总结功能已暂停：隐藏生成按钮 */}
+          {/* <Button onClick={handleSummarize} disabled={summaryLoading} className="gap-1.5">
             {summaryLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             {summaryLoading ? 'AI总结中...' : hasSummary ? '重新生成总结' : '生成AI总结'}
-          </Button>
+          </Button> */}
         </div>
 
-        {(subtitleError || summaryError) && (
+        {(subtitleError /* || summaryError */) && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-600 space-y-1">
             {subtitleError && <p>字幕获取失败：{subtitleError}</p>}
-            {summaryError && <p>总结生成失败：{summaryError}</p>}
+            {/* {summaryError && <p>总结生成失败：{summaryError}</p>} */}
           </div>
         )}
 
-        {summaryLoading && (
+        {/* AI 总结功能已暂停：隐藏加载与结果展示 */}
+        {/* {summaryLoading && (
           <div className="rounded-xl border bg-muted/40 p-5 space-y-3 animate-pulse">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -353,102 +360,23 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
             <div className="h-3.5 rounded bg-muted w-4/5" />
             <div className="h-3.5 rounded bg-muted w-3/5" />
           </div>
+        )} */}
+
+        {/* 字幕原文（AI 总结功能已暂停） */}
+        {hasSubtitle && (
+          <div className="rounded-xl border divide-y">
+            {subtitles.map((s, i) => (
+              <div key={i} className="flex gap-4 px-4 py-3">
+                <span className="shrink-0 font-mono text-sm text-primary/80 pt-0.5">{s.time}</span>
+                <span className="leading-relaxed text-foreground/90">{s.text}</span>
+              </div>
+            ))}
+          </div>
         )}
-
-        {/* 总结 / 字幕 */}
-        {hasSummary && summary ? (
-          <Tabs defaultValue="summary" className="w-full">
-            <TabsList className="h-10">
-              <TabsTrigger value="summary" className="text-sm gap-1.5 px-4">
-                <Sparkles className="h-4 w-4" /> AI总结
-              </TabsTrigger>
-              <TabsTrigger value="subtitle" className="text-sm gap-1.5 px-4">
-                <FileText className="h-4 w-4" /> 字幕原文
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="summary" className="mt-4 space-y-5">
-              <div className="rounded-xl border bg-primary/5 border-primary/20 p-4">
-                <div className="flex items-center gap-1.5 text-sm font-semibold text-primary mb-2">
-                  <Sparkles className="h-4 w-4" /> 内容摘要
-                </div>
-                <p className="leading-relaxed">{summary.brief}</p>
-              </div>
-
-              <div>
-                <div className="flex items-center gap-1.5 text-sm font-semibold mb-2.5">
-                  <Lightbulb className="h-4 w-4 text-amber-500" /> 关键要点
-                </div>
-                <div className="space-y-2.5">
-                  {summary.points.map((p, i) => (
-                    <div key={i} className="flex gap-3">
-                      <span className="shrink-0 h-6 w-6 rounded-full bg-muted text-xs font-semibold flex items-center justify-center mt-0.5">
-                        {i + 1}
-                      </span>
-                      <span className="leading-relaxed text-foreground/90">{p}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="rounded-xl border p-4">
-                <div className="flex items-center justify-between mb-2.5">
-                  <div className="flex items-center gap-1.5 text-sm font-semibold">
-                    <MessageCircle className="h-4 w-4 text-primary" /> UP主观点
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Badge variant="outline" className="text-xs">{summary.stance.label}</Badge>
-                    {sentiment && (
-                      <Badge className={cn('text-xs border', sentiment.cls)}>{sentiment.label}</Badge>
-                    )}
-                  </div>
-                </div>
-                <p className="leading-relaxed text-foreground/90">{summary.stance.detail}</p>
-              </div>
-
-              <div className="rounded-xl bg-muted/60 p-4">
-                <Quote className="h-5 w-5 text-primary mb-2" />
-                <p className="italic leading-relaxed text-foreground/90">{summary.quote}</p>
-              </div>
-
-              <div>
-                <div className="flex items-center gap-1.5 text-sm font-semibold mb-2.5">
-                  <Tags className="h-4 w-4 text-sky-500" /> 涉及话题
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {summary.topics.map((t) => (
-                    <Badge key={t} variant="secondary">{t}</Badge>
-                  ))}
-                </div>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="subtitle" className="mt-4">
-              <div className="rounded-xl border divide-y">
-                {subtitles.map((s, i) => (
-                  <div key={i} className="flex gap-4 px-4 py-3">
-                    <span className="shrink-0 font-mono text-sm text-primary/80 pt-0.5">{s.time}</span>
-                    <span className="leading-relaxed text-foreground/90">{s.text}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-3 text-xs text-muted-foreground text-center">
-                共 {subtitles.length} 条字幕 · 可导出 SRT / TXT 格式
-              </p>
-            </TabsContent>
-          </Tabs>
-        ) : (
-          !summaryLoading && (
-            <div className="rounded-xl border border-dashed p-10 text-center">
-              <Sparkles className="h-8 w-8 text-muted-foreground/50 mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                该视频尚未生成 AI 总结<br />
-                点击上方「生成AI总结」，将自动获取字幕并调用大模型分析
-              </p>
-            </div>
-          )
+        {hasSubtitle && (
+          <p className="mt-3 text-xs text-muted-foreground text-center">
+            共 {subtitles.length} 条字幕 · 可导出 SRT / TXT 格式
+          </p>
         )}
       </main>
     </div>

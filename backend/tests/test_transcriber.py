@@ -265,7 +265,7 @@ async def test_runner_subtitle_fetch_falls_back_to_whisper(db_session_factory, m
     ]
     async def _fake_transcribe(bvid):
         return fake_lines
-    monkeypatch.setattr("app.tasks.runner.asr_pipeline.transcribe_video", _fake_transcribe)
+    monkeypatch.setattr("app.transcriber.pipeline.transcribe_video", _fake_transcribe)
 
     with db_session_factory() as db:
         up = Uploader(id="u1", user_id="default", bilibili_uid="1", name="A", unread_count=0, notify_enabled=True)
@@ -326,7 +326,7 @@ async def test_runner_subtitle_fetch_mismatch_falls_back_to_whisper(db_session_f
     async def _fake_transcribe(bvid):
         return fake_lines
 
-    monkeypatch.setattr("app.tasks.runner.asr_pipeline.transcribe_video", _fake_transcribe)
+    monkeypatch.setattr("app.transcriber.pipeline.transcribe_video", _fake_transcribe)
 
     with db_session_factory() as db:
         up = Uploader(id="u1", user_id="default", bilibili_uid="1", name="A", unread_count=0, notify_enabled=True)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -13,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.errors import BizError
 from app.models import DEFAULT_USER_ID, Task, Uploader, Video
+from app.tasks.service import create_task
 from app.websocket import push_uploader_unread_sync
 from app.schemas import (
     BackfillLikesIn,
@@ -80,16 +80,7 @@ def list_videos(
 @router.post("/videos/refresh", response_model=RefreshOut, status_code=202)
 def refresh_all(request: Request, db: Session = Depends(get_db)) -> RefreshOut:
     """全局刷新：创建一条 ref 为空的 feed_refresh 任务，runner 拉起所有 UP主。"""
-    task = Task(
-        task_id=uuid.uuid4().hex[:12],
-        type="feed_refresh",
-        status="pending",
-        progress=0,
-        ref_type=None,
-        ref_id=None,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(task)
+    task = create_task(db, "feed_refresh")
     db.commit()
     db.refresh(task)
 
@@ -120,16 +111,7 @@ def backfill_likes(
     else:
         raise BizError("INVALID_PARAM", "需提供 video_id 或 up_id", http_status=422)
 
-    task = Task(
-        task_id=uuid.uuid4().hex[:12],
-        type="video_stats_refresh",
-        status="pending",
-        progress=0,
-        ref_type=ref_type,
-        ref_id=ref_id,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(task)
+    task = create_task(db, "video_stats_refresh", ref_type, ref_id)
     db.commit()
     db.refresh(task)
 

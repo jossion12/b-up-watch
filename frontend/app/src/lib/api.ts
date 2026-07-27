@@ -62,6 +62,12 @@ export interface UploaderPrioritizeLatestOut {
   task_ids: string[]
 }
 
+export interface UploaderBackfillYearOut {
+  task_id: string
+  type: string
+  days_back: number
+}
+
 export const uploadersApi = {
   list: () => request<{ items: BackendUploader[]; total: number }>('/uploaders'),
   search: (q: string, page = 1) =>
@@ -82,6 +88,10 @@ export const uploadersApi = {
     }),
   prioritizeLatest: (id: string, count = 10) =>
     request<UploaderPrioritizeLatestOut>(`/uploaders/${id}/prioritize-latest?count=${count}`, {
+      method: 'POST',
+    }),
+  backfillYear: (id: string) =>
+    request<UploaderBackfillYearOut>(`/uploaders/${id}/backfill-year`, {
       method: 'POST',
     }),
 }
@@ -219,6 +229,8 @@ export interface BackendTask {
   progress: number
   ref_type?: string
   ref_id?: string
+  ref_title?: string
+  operation_label: string
   error?: { code: string; message: string; details?: any }
   priority: number
   created_at: string

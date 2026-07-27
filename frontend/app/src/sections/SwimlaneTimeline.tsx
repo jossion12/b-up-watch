@@ -450,7 +450,7 @@ export default function SwimlaneTimeline({
                                 <span key={t} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t}</span>
                               ))}
                             </div>
-                            <p className="text-[10px] text-primary/80 pt-1 border-t">双击节点打开详情页 · 下载字幕 · AI总结</p>
+                            <p className="text-[10px] text-primary/80 pt-1 border-t">双击节点打开详情页 · 下载字幕</p>
                           </div>
                         </HoverCardContent>
                       </HoverCard>

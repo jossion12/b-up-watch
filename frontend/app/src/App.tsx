@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Routes, Route, useNavigate } from 'react-router'
-import { Tv, LayoutList, LineChart, Activity, AlertCircle, RefreshCw, Bell, Settings, Loader2 } from 'lucide-react'
+import { Tv, Activity, AlertCircle, RefreshCw, Bell, Settings, Loader2 } from 'lucide-react'
 import AddUploaderDialog from '@/sections/AddUploaderDialog'
-import { cn } from '@/lib/utils'
+// import { cn } from '@/lib/utils'
 import SwimlaneTimeline from '@/sections/SwimlaneTimeline'
 import Timeline from '@/sections/Timeline'
-import Insights from '@/sections/Insights'
+// AI 总结功能已暂停：隐藏洞察页
+// import Insights from '@/sections/Insights'
 import Jobs from '@/sections/Jobs'
 import FailedTasks from '@/sections/FailedTasks'
 import VideoPage from '@/sections/VideoPage'
@@ -17,8 +18,6 @@ import { useWebSocket } from '@/hooks/useWebSocket'
 import type { Uploader, Video } from '@/types'
 import type { BackendVideo } from '@/lib/api'
 
-type View = 'timeline' | 'insights'
-
 const NOW = new Date()
 
 function formatDate(d: Date) {
@@ -27,7 +26,6 @@ function formatDate(d: Date) {
 
 export default function App() {
   const navigate = useNavigate()
-  const [view, setView] = useState<View>('timeline')
   const [centerMode, setCenterMode] = useState<'swimlane' | 'list'>('swimlane')
   const [filterUpIds, setFilterUpIds] = useState<Set<string>>(new Set())
   const [filterCategories, setFilterCategories] = useState<Set<string>>(new Set())
@@ -147,11 +145,12 @@ export default function App() {
       setUploaders((prev) =>
         prev.map((u) => (u.id === msg.payload.uploader_id ? { ...u, unread: msg.payload.unread_count } : u))
       )
-    } else if (msg.event === 'summary.completed') {
-      setVideos((prev) =>
-        prev.map((v) => (v.id === msg.payload.video_id ? { ...v, status: 'summarized' } : v))
-      )
-      loadStatus()
+    // AI 总结功能已暂停
+    // } else if (msg.event === 'summary.completed') {
+    //   setVideos((prev) =>
+    //     prev.map((v) => (v.id === msg.payload.video_id ? { ...v, status: 'summarized' } : v))
+    //   )
+    //   loadStatus()
     } else if (msg.event === 'task.updated') {
       loadStatus()
       if (msg.payload.status === 'success') {
@@ -172,9 +171,10 @@ export default function App() {
     setVideos((prev) => prev.map((v) => (v.id === id && v.status === 'new' ? { ...v, status: 'downloaded' } : v)))
   }
 
-  const handleSummarized = (id: string) => {
-    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, status: 'summarized' } : v)))
-  }
+  // AI 总结功能已暂停
+  // const handleSummarized = (id: string) => {
+  //   setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, status: 'summarized' } : v)))
+  // }
 
   const filteredVideos = useMemo(() => {
     let list = videos
@@ -208,8 +208,8 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 视图切换 */}
-              <div className="flex items-center gap-1 rounded-lg bg-muted p-1 ml-6">
+              {/* AI 总结功能已暂停：隐藏视图切换，仅保留时间线 */}
+              {/* <div className="flex items-center gap-1 rounded-lg bg-muted p-1 ml-6">
                 <button
                   onClick={() => setView('timeline')}
                   className={cn(
@@ -228,19 +228,19 @@ export default function App() {
                 >
                   <LineChart className="h-3.5 w-3.5" /> 洞察
                 </button>
-                <button
-                  onClick={() => navigate('/jobs')}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Activity className="h-3.5 w-3.5" /> 任务
-                </button>
-                <button
-                  onClick={() => navigate('/failed-tasks')}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <AlertCircle className="h-3.5 w-3.5" /> 失败任务
-                </button>
-              </div>
+              </div> */}
+              <button
+                onClick={() => navigate('/jobs')}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Activity className="h-3.5 w-3.5" /> 任务
+              </button>
+              <button
+                onClick={() => navigate('/failed-tasks')}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <AlertCircle className="h-3.5 w-3.5" /> 失败任务
+              </button>
 
               <div className="flex-1" />
 
@@ -304,35 +304,31 @@ export default function App() {
 
             {/* 主体 */}
             <div className="flex-1 flex min-h-0">
-              {view === 'timeline' ? (
-                centerMode === 'swimlane' ? (
-                  <SwimlaneTimeline
-                    videos={filteredVideos}
-                    uploaders={uploaders}
-                    selectedVideoId={selectedVideoId}
-                    onSelectVideo={handleSelectVideo}
-                    onOpenVideo={handleOpenVideo}
-                    filterUpIds={filterUpIds}
-                    filterCategories={filterCategories}
-                    mode={centerMode}
-                    onModeChange={setCenterMode}
-                    now={NOW}
-                    onLoadOlder={loadOlderVideos}
-                  />
-                ) : (
-                  <Timeline
-                    videos={filteredVideos}
-                    uploaders={uploaders}
-                    onOpenVideo={handleOpenVideo}
-                    filterUpIds={filterUpIds}
-                    filterCategories={filterCategories}
-                    mode={centerMode}
-                    onModeChange={setCenterMode}
-                    now={NOW}
-                  />
-                )
+              {centerMode === 'swimlane' ? (
+                <SwimlaneTimeline
+                  videos={filteredVideos}
+                  uploaders={uploaders}
+                  selectedVideoId={selectedVideoId}
+                  onSelectVideo={handleSelectVideo}
+                  onOpenVideo={handleOpenVideo}
+                  filterUpIds={filterUpIds}
+                  filterCategories={filterCategories}
+                  mode={centerMode}
+                  onModeChange={setCenterMode}
+                  now={NOW}
+                  onLoadOlder={loadOlderVideos}
+                />
               ) : (
-                <Insights uploaders={uploaders} videos={filteredVideos} onOpenVideo={handleOpenVideo} />
+                <Timeline
+                  videos={filteredVideos}
+                  uploaders={uploaders}
+                  onOpenVideo={handleOpenVideo}
+                  filterUpIds={filterUpIds}
+                  filterCategories={filterCategories}
+                  mode={centerMode}
+                  onModeChange={setCenterMode}
+                  now={NOW}
+                />
               )}
             </div>
           </div>
@@ -345,12 +341,11 @@ export default function App() {
             videos={videos}
             uploaders={uploaders}
             onDownloadVideo={handleDownloadVideo}
-            onSummarized={handleSummarized}
           />
         }
       />
-      <Route path="/jobs" element={<Jobs videos={videos} uploaders={uploaders} />} />
-      <Route path="/failed-tasks" element={<FailedTasks videos={videos} uploaders={uploaders} />} />
+      <Route path="/jobs" element={<Jobs />} />
+      <Route path="/failed-tasks" element={<FailedTasks />} />
     </Routes>
   )
 }

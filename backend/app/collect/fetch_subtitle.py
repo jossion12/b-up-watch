@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -13,6 +15,9 @@ from app.errors import BizError
 from app.models import Subtitle, Video
 
 log = logging.getLogger(__name__)
+
+# 字幕本地归档根目录（与 SQLite 文件同目录，保持项目约定）
+_SUBTITLE_DATA_DIR = Path("data")
 
 
 def _subtitle_span_seconds(lines: list[dict]) -> float:
@@ -43,6 +48,60 @@ def _check_subtitle_duration(lines: list[dict], video_duration_sec: int) -> None
             details={"subtitle_span_sec": span, "video_duration_sec": video_duration_sec},
             http_status=422,
         )
+
+
+def _sanitize_filename(name: str) -> str:
+    """把字符串中的非法文件名字符与空白替换为下划线，并截断长度。"""
+    name = name.strip()
+    # Windows / POSIX 非法字符：\ / : * ? " < > |，以及空白字符
+    name = re.sub(r'[\\\\/:*?"<>|\s]+', "_", name)
+    # 去除连续下划线与首尾下划线
+    name = re.sub(r"_+", "_", name).strip("_")
+    # 限制长度，避免路径过长
+    if len(name) > 120:
+        name = name[:120]
+    return name or "untitled"
+
+
+def _subtitle_to_markdown(lines: list[dict]) -> str:
+    """把标准字幕 lines 转为 Markdown：每条一句，带时间戳。"""
+    def _fmt(sec: float) -> str:
+        m = int(sec // 60)
+        s = int(sec % 60)
+        ms = int(round((sec - int(sec)) * 1000))
+        return f"{m:02d}:{s:02d}.{ms:03d}"
+
+    parts: list[str] = []
+    for item in lines:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(item.get("start_sec", 0))
+        end = float(item.get("end_sec", 0))
+        parts.append(f"[{_fmt(start)} -> {_fmt(end)}] {text}")
+    return "\n\n".join(parts)
+
+
+def _subtitle_file_path(video: Video) -> Path:
+    """生成本地归档路径：data/{up主名称}/YYYYMMDD-{视频名称}.md。"""
+    uploader_name = _sanitize_filename(video.uploader.name)
+    published = video.published_at
+    if published is None:
+        published = datetime.now(timezone.utc)
+    date_prefix = published.strftime("%Y%m%d")
+    video_name = _sanitize_filename(video.title)
+    file_name = f"{date_prefix}-{video_name}.md"
+    return _SUBTITLE_DATA_DIR / uploader_name / file_name
+
+
+def _save_subtitle_to_file(video: Video, lines: list[dict]) -> Path:
+    """将字幕内容写入本地 Markdown 文件，返回最终路径。"""
+    path = _subtitle_file_path(video)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = _subtitle_to_markdown(lines)
+    path.write_text(content, encoding="utf-8")
+    log.info("saved subtitle to %s", path)
+    return path
 
 
 async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
@@ -103,6 +162,14 @@ async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
         video.status = "subtitled"
 
     db.commit()
+
+    # 本地归档：data/{up主名称}/YYYYMMDD-{视频名称}.md
+    try:
+        _save_subtitle_to_file(video, lines)
+    except Exception as e:
+        # 文件归档失败不影响 DB 写入，仅记录日志
+        log.warning("failed to save subtitle file for video %s: %s", video.bvid, e)
+
     log.info(
         "fetched subtitle for video %s: %d lines, source=%s, lang=%s",
         video.bvid, len(lines), source, language,

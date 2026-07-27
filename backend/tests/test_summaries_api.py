@@ -70,7 +70,7 @@ def _seed_video(db, *, with_subtitle=True, with_summary=False):
 
 # ---------- 3.4.1 ----------
 
-def test_create_summary_creates_task(client, db_session_factory, monkeypatch):
+def test_create_summary_returns_disabled(client, db_session_factory, monkeypatch):
     db = db_session_factory()
     v = _seed_video(db)
     # 关掉 runner.notify 副作用
@@ -78,60 +78,58 @@ def test_create_summary_creates_task(client, db_session_factory, monkeypatch):
         def notify(self): pass
     monkeypatch.setattr(client.app.state, "runner", FakeRunner())
 
+    # AI 总结功能已暂停
     resp = client.post("/api/v1/videos/v_001/summary", json={})
-    assert resp.status_code == 202
-    body = resp.json()
-    assert body["type"] == "ai_summary"
-    assert len(body["task_id"]) > 0
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
 def test_create_summary_returns_existing_when_no_force(client, db_session_factory):
+    # AI 总结功能已暂停：即使已有总结，创建接口也返回 503
     _seed_video(db_session_factory(), with_summary=True)
     resp = client.post("/api/v1/videos/v_001/summary", json={"force": False})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["brief"] == "已有摘要"
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
-def test_create_summary_with_force_creates_new_task(client, db_session_factory, monkeypatch):
+def test_create_summary_with_force_returns_disabled(client, db_session_factory, monkeypatch):
     _seed_video(db_session_factory(), with_summary=True)
     class FakeRunner:
         def notify(self): pass
     monkeypatch.setattr(client.app.state, "runner", FakeRunner())
 
+    # AI 总结功能已暂停
     resp = client.post("/api/v1/videos/v_001/summary", json={"force": True})
-    assert resp.status_code == 202
-    body = resp.json()
-    assert body["type"] == "ai_summary"
-    assert "task_id" in body
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
-def test_create_summary_404_video(client, db_session_factory):
+def test_create_summary_disabled_even_when_video_missing(client, db_session_factory):
+    # AI 总结功能已暂停：创建接口直接返回 503，不再校验视频是否存在
     db = db_session_factory()
     db.commit()
     resp = client.post("/api/v1/videos/nope/summary", json={})
-    assert resp.status_code == 404
-    assert resp.json()["error"]["code"] == "VIDEO_NOT_FOUND"
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
-def test_create_summary_404_template(client, db_session_factory):
+def test_create_summary_disabled_even_when_template_missing(client, db_session_factory):
+    # AI 总结功能已暂停：创建接口直接返回 503，不再校验模板
     _seed_video(db_session_factory())
     resp = client.post("/api/v1/videos/v_001/summary", json={"template_id": "nope"})
-    assert resp.status_code == 404
-    assert resp.json()["error"]["code"] == "TEMPLATE_NOT_FOUND"
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
-def test_create_summary_cascades_subtitle_task_when_no_subtitle(client, db_session_factory):
+def test_create_summary_disabled_when_no_subtitle(client, db_session_factory):
+    # AI 总结功能已暂停：不再级联创建字幕任务
     _seed_video(db_session_factory(), with_subtitle=False)
     resp = client.post("/api/v1/videos/v_001/summary", json={})
-    assert resp.status_code == 202
-    body = resp.json()
-    assert body["type"] == "ai_summary"
-    assert len(body["chain"]) == 1
-    assert body["chain"][0]["type"] == "subtitle_fetch"
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
-def test_create_summary_409_on_dup_task(client, db_session_factory):
+def test_create_summary_disabled_even_on_dup_task(client, db_session_factory):
     from app.models import Task
     _seed_video(db_session_factory())
     db = db_session_factory()
@@ -141,8 +139,10 @@ def test_create_summary_409_on_dup_task(client, db_session_factory):
         created_at=datetime.now(timezone.utc),
     ))
     db.commit()
+    # AI 总结功能已暂停：不再进行任务冲突检查
     resp = client.post("/api/v1/videos/v_001/summary", json={})
-    assert resp.status_code == 409
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
 # ---------- 3.4.2 ----------
@@ -170,25 +170,29 @@ def test_get_summary_404_when_video_missing(client, db_session_factory):
 
 # ---------- 3.4.3 ----------
 
-def test_regenerate_always_creates_task(client, db_session_factory):
+def test_regenerate_returns_disabled(client, db_session_factory):
+    # AI 总结功能已暂停
     _seed_video(db_session_factory(), with_summary=True)
     resp = client.post("/api/v1/videos/v_001/summary/regenerate", json={})
-    assert resp.status_code == 202
-    assert resp.json()["type"] == "ai_summary"
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
-def test_regenerate_404_template(client, db_session_factory):
+def test_regenerate_disabled_even_when_template_missing(client, db_session_factory):
+    # AI 总结功能已暂停
     _seed_video(db_session_factory())
     resp = client.post(
         "/api/v1/videos/v_001/summary/regenerate",
         json={"template_id": "nope"},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
 # ---------- 3.4.4 ----------
 
-def test_batch_summarize_creates_tasks(client, db_session_factory):
+def test_batch_summarize_returns_disabled(client, db_session_factory):
+    # AI 总结功能已暂停
     _seed_video(db_session_factory())
     db = db_session_factory()
     v2 = Video(
@@ -203,18 +207,18 @@ def test_batch_summarize_creates_tasks(client, db_session_factory):
     db.commit()
 
     resp = client.post("/api/v1/summaries/batch", json={
-        "video_ids": ["v_001", "v_002", "nope"],  # 跳过 nope
+        "video_ids": ["v_001", "v_002", "nope"],
         "template_id": "tpl_default",
     })
-    assert resp.status_code == 202
-    body = resp.json()
-    assert body["batch_id"].startswith("b_")
-    assert len(body["task_ids"]) == 2
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"
 
 
-def test_batch_summarize_404_template(client, db_session_factory):
+def test_batch_summarize_disabled_even_when_template_missing(client, db_session_factory):
+    # AI 总结功能已暂停
     _seed_video(db_session_factory())
     resp = client.post("/api/v1/summaries/batch", json={
         "video_ids": ["v_001"], "template_id": "nope",
     })
-    assert resp.status_code == 404
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "AI_SUMMARY_DISABLED"

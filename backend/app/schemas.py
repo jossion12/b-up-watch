@@ -58,6 +58,12 @@ class UploaderPrioritizeLatestOut(_Base):
     task_ids: list[str]
 
 
+class UploaderBackfillYearOut(_Base):
+    task_id: str
+    type: str
+    days_back: int
+
+
 # ---------- 搜索代理（3.1.2） ----------
 
 class UploaderSearchItem(_Base):
@@ -128,6 +134,8 @@ class TaskOut(_Base):
     progress: int = 0
     ref_type: Optional[str] = None
     ref_id: Optional[str] = None
+    ref_title: Optional[str] = None
+    operation_label: str
     error: Optional[dict] = None
     priority: int = 0
     created_at: datetime

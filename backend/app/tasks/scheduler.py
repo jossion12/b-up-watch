@@ -1,12 +1,12 @@
 """周期性任务调度器。
 
-负责在后台持续扫描数据库，按需生成 subtitle_fetch / ai_summary / feed_refresh
-任务并通知 TaskRunner 立即消费。三个循环相互独立：
+负责在后台持续扫描数据库，按需生成 subtitle_fetch / ai_summary 任务并通知
+TaskRunner 立即消费。两个循环相互独立：
 
 - subtitle_loop：发现尚未获取字幕的视频，排队 subtitle_fetch。
-- summary_loop：发现已有字幕但尚未总结的视频，排队 ai_summary。
-- backfill_loop：当当前库中已没有“未获取字幕”且“未总结”的视频时，为某个 UP 主
-  创建 feed_refresh 任务以拉取更早的视频。
+- summary_loop：AI 总结功能已暂停，仅空转占位。
+
+历史回溯（feed_refresh）不再由调度器自动触发，改为通过前端按钮手动触发。
 
 设计上不直接做 IO/LLM 调用，只操作 tasks 表，实际执行仍由 TaskRunner 单 worker
 顺序处理，保持现有风控与并发策略。
@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -24,6 +23,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import DEFAULT_USER_ID, Task, Uploader, Video
+from app.tasks.service import create_task
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +59,6 @@ class TaskScheduler:
         self._enabled = {
             "subtitle": True,
             "summary": True,
-            "backfill": True,
         }
 
     async def start(self) -> None:
@@ -67,13 +66,11 @@ class TaskScheduler:
         self._tasks = [
             asyncio.create_task(self._subtitle_loop(), name="scheduler-subtitle"),
             asyncio.create_task(self._summary_loop(), name="scheduler-summary"),
-            asyncio.create_task(self._backfill_loop(), name="scheduler-backfill"),
         ]
         log.info(
-            "task scheduler started: subtitle=%.0fs summary=%.0fs backfill=%.0fs batch=%d",
+            "task scheduler started: subtitle=%.0fs summary=%.0fs batch=%d",
             self.subtitle_interval,
             self.summary_interval,
-            self.backfill_interval,
             self.batch_size,
         )
 
@@ -90,7 +87,6 @@ class TaskScheduler:
         labels = {
             "subtitle": "字幕抓取",
             "summary": "AI 总结",
-            "backfill": "历史回溯",
         }
         return [
             {"name": name, "enabled": enabled, "label": labels[name]}
@@ -119,28 +115,17 @@ class TaskScheduler:
             await self._sleep(self.subtitle_interval)
 
     async def _summary_loop(self) -> None:
+        # AI 总结功能已暂停：不再自动创建 ai_summary 任务
         while not self._stop.is_set():
-            try:
-                if self._enabled.get("summary"):
-                    created = await self._enqueue_summary_tasks()
-                    if created:
-                        log.info("scheduler enqueued %d summary task(s)", created)
-                        self._notify_runner()
-            except Exception:
-                log.exception("summary scheduler loop failed")
+            # try:
+            #     if self._enabled.get("summary"):
+            #         created = await self._enqueue_summary_tasks()
+            #         if created:
+            #             log.info("scheduler enqueued %d summary task(s)", created)
+            #             self._notify_runner()
+            # except Exception:
+            #     log.exception("summary scheduler loop failed")
             await self._sleep(self.summary_interval)
-
-    async def _backfill_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                if self._enabled.get("backfill"):
-                    created = await self._enqueue_backfill_task()
-                    if created:
-                        log.info("scheduler enqueued backfill task")
-                        self._notify_runner()
-            except Exception:
-                log.exception("backfill scheduler loop failed")
-            await self._sleep(self.backfill_interval)
 
     async def _sleep(self, seconds: float) -> None:
         try:
@@ -154,21 +139,6 @@ class TaskScheduler:
                 self.runner.notify()
             except Exception:
                 log.warning("notify runner failed", exc_info=True)
-
-    def _new_id(self) -> str:
-        return uuid.uuid4().hex[:12]
-
-    def _new_task(self, type_: str, ref_type: str | None, ref_id: str | None, meta: dict | None = None) -> Task:
-        return Task(
-            task_id=self._new_id(),
-            type=type_,
-            status="pending",
-            progress=0,
-            ref_type=ref_type,
-            ref_id=ref_id,
-            meta=meta,
-            created_at=datetime.now(timezone.utc),
-        )
 
     def _recent_failed_task(self, task_type: str) -> select:
         """构造子查询：同一视频在退避时间内是否存在同类型失败任务。"""
@@ -212,7 +182,7 @@ class TaskScheduler:
 
             created = 0
             for v in videos:
-                db.add(self._new_task("subtitle_fetch", "video", v.id))
+                create_task(db, "subtitle_fetch", "video", v.id)
                 created += 1
             if created:
                 db.commit()
@@ -247,30 +217,30 @@ class TaskScheduler:
 
             created = 0
             for v in videos:
-                db.add(self._new_task("ai_summary", "video", v.id))
+                create_task(db, "ai_summary", "video", v.id)
                 created += 1
             if created:
                 db.commit()
             return created
 
     async def _enqueue_backfill_task(self) -> bool:
-        """若当前没有待处理/未完成的字幕或总结工作，则为一个 UP 主拉取更早视频。"""
+        """若当前没有待处理/未完成的字幕工作，则为一个 UP 主拉取更早视频。"""
         with self._session_factory() as db:
-            # 1) 库中是否还有未获取字幕或未总结的视频
+            # 1) 库中是否还有未获取字幕的视频（AI 总结已暂停，不再等待总结）
             pending_video = db.execute(
                 select(Video.id)
                 .where(
                     Video.user_id == DEFAULT_USER_ID,
-                    (Video.has_subtitle.is_(False) | Video.has_summary.is_(False)),
+                    Video.has_subtitle.is_(False),
                 )
                 .limit(1)
             ).scalar_one_or_none()
 
-            # 2) 是否还有进行中的字幕/总结任务
+            # 2) 是否还有进行中的字幕任务（AI 总结已暂停，不再检查 ai_summary）
             active_task = db.execute(
                 select(Task.task_id)
                 .where(
-                    Task.type.in_(["subtitle_fetch", "ai_summary"]),
+                    Task.type == "subtitle_fetch",
                     Task.status.in_(["pending", "running"]),
                 )
                 .limit(1)
@@ -322,17 +292,16 @@ class TaskScheduler:
             else:
                 days_back = 90
 
-            db.add(
-                self._new_task(
-                    "feed_refresh",
-                    "uploader",
-                    up.id,
-                    meta={
-                        "days_back": max(days_back, self.backfill_extra_days),
-                        "max_pages": self.backfill_max_pages,
-                        "mode": "backfill",
-                    },
-                )
+            create_task(
+                db,
+                "feed_refresh",
+                "uploader",
+                up.id,
+                meta={
+                    "days_back": max(days_back, self.backfill_extra_days),
+                    "max_pages": self.backfill_max_pages,
+                    "mode": "backfill",
+                },
             )
             db.commit()
             return True

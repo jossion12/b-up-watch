@@ -101,13 +101,11 @@ def update_system_config(
 _JOB_TASK_TYPES = {
     "subtitle": "subtitle_fetch",
     "summary": "ai_summary",
-    "backfill": "feed_refresh",
 }
 
 _JOB_LABELS = {
     "subtitle": "字幕抓取",
     "summary": "AI 总结",
-    "backfill": "历史回溯",
 }
 
 _OPERATION_LABELS = {
@@ -119,22 +117,31 @@ _OPERATION_LABELS = {
 }
 
 
-def _current_task_for_job(db: Session, runner, job_name: str) -> JobCurrentTaskOut | None:
-    if runner is None:
+def _resolve_ref_title(db: Session, task: Task) -> str | None:
+    if not task.ref_id:
         return None
-    task = runner.current_task
-    if task is None or task.type != _JOB_TASK_TYPES[job_name]:
+    if task.ref_type == "video":
+        v = db.get(Video, task.ref_id)
+        return v.title if v is not None else None
+    if task.ref_type == "uploader":
+        up = db.get(Uploader, task.ref_id)
+        return up.name if up is not None else None
+    return None
+
+
+def _current_task_for_job(db: Session, job_name: str) -> JobCurrentTaskOut | None:
+    task_type = _JOB_TASK_TYPES.get(job_name)
+    if task_type is None:
         return None
 
-    title: str | None = None
-    if task.ref_type == "video" and task.ref_id:
-        v = db.get(Video, task.ref_id)
-        if v is not None:
-            title = v.title
-    elif task.ref_type == "uploader" and task.ref_id:
-        up = db.get(Uploader, task.ref_id)
-        if up is not None:
-            title = up.name
+    task = db.execute(
+        select(Task)
+        .where(Task.type == task_type, Task.status == "running")
+        .order_by(Task.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if task is None:
+        return None
 
     return JobCurrentTaskOut(
         task_id=task.task_id,
@@ -143,7 +150,7 @@ def _current_task_for_job(db: Session, runner, job_name: str) -> JobCurrentTaskO
         progress=task.progress,
         ref_type=task.ref_type,
         ref_id=task.ref_id,
-        title=title,
+        title=_resolve_ref_title(db, task),
         operation_label=_OPERATION_LABELS.get(task.type, task.type),
     )
 
@@ -151,7 +158,6 @@ def _current_task_for_job(db: Session, runner, job_name: str) -> JobCurrentTaskO
 @router.get("/system/jobs", response_model=JobListOut)
 def list_jobs(request: Request, db: Session = Depends(get_db)) -> JobListOut:
     scheduler = getattr(request.app.state, "scheduler", None)
-    runner = getattr(request.app.state, "runner", None)
     jobs = scheduler.list_jobs() if scheduler else [
         {"name": name, "enabled": True, "label": label}
         for name, label in _JOB_LABELS.items()
@@ -159,7 +165,7 @@ def list_jobs(request: Request, db: Session = Depends(get_db)) -> JobListOut:
     items: list[JobOut] = []
     for job in jobs:
         name = job["name"]
-        current = _current_task_for_job(db, runner, name) if runner else None
+        current = _current_task_for_job(db, name)
         items.append(JobOut(
             name=name,
             label=job["label"],
@@ -182,7 +188,7 @@ def update_job(
     if scheduler is None:
         raise BizError("SCHEDULER_UNAVAILABLE", "调度器不可用", http_status=503)
     scheduler.set_enabled(name, payload.enabled)
-    current = _current_task_for_job(db, request.app.state.runner, name)
+    current = _current_task_for_job(db, name)
     return JobOut(
         name=name,
         label=_JOB_LABELS[name],

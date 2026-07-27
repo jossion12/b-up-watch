@@ -12,10 +12,52 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.errors import BizError
-from app.models import Task
+from app.models import Task, Uploader, Video
 from app.schemas import TaskListOut, TaskOut, TaskStatsOut
 
 router = APIRouter()
+
+
+_OPERATION_LABELS = {
+    "subtitle_fetch": "获取字幕",
+    "ai_summary": "生成总结",
+    "feed_refresh": "拉取视频",
+    "whisper_transcribe": "Whisper 转写",
+    "video_stats_refresh": "回填点赞",
+}
+
+
+def _operation_label(task_type: str) -> str:
+    return _OPERATION_LABELS.get(task_type, task_type)
+
+
+def _resolve_ref_title(db: Session, task: Task) -> Optional[str]:
+    if not task.ref_id:
+        return None
+    if task.ref_type == "video":
+        v = db.get(Video, task.ref_id)
+        return v.title if v is not None else None
+    if task.ref_type == "uploader":
+        up = db.get(Uploader, task.ref_id)
+        return up.name if up is not None else None
+    return None
+
+
+def _task_out(db: Session, task: Task) -> TaskOut:
+    return TaskOut(
+        task_id=task.task_id,
+        type=task.type,
+        status=task.status,
+        progress=task.progress,
+        ref_type=task.ref_type,
+        ref_id=task.ref_id,
+        ref_title=_resolve_ref_title(db, task),
+        operation_label=_operation_label(task.type),
+        error=task.error,
+        priority=task.priority,
+        created_at=task.created_at,
+        finished_at=task.finished_at,
+    )
 
 
 # ---------- 3.5.2 任务列表 ----------
@@ -32,7 +74,7 @@ def list_tasks(
         if statuses:
             stmt = stmt.where(Task.status.in_(statuses))
     rows = db.execute(stmt.limit(limit)).scalars().all()
-    return TaskListOut(items=[TaskOut.model_validate(r) for r in rows], total=len(rows))
+    return TaskListOut(items=[_task_out(db, r) for r in rows], total=len(rows))
 
 
 # ---------- 3.5.3 任务统计 ----------
@@ -92,7 +134,7 @@ def get_task(task_id: str, db: Session = Depends(get_db)) -> TaskOut:
     t = db.get(Task, task_id)
     if t is None:
         raise BizError("TASK_NOT_FOUND", "任务不存在", http_status=404)
-    return TaskOut.model_validate(t)
+    return _task_out(db, t)
 
 
 # ---------- 3.5.4 重试失败任务 ----------
@@ -121,4 +163,4 @@ def retry_task(
     if runner is not None:
         runner.notify()
 
-    return TaskOut.model_validate(t)
+    return _task_out(db, t)

@@ -13,7 +13,6 @@ template_id / model 通过 Task.meta JSON 列透传到执行层，由 runner._di
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -23,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.errors import BizError
 from app.models import Subtitle, Summary, SummaryTemplate, Task, Video
+from app.tasks.service import create_task
 from app.schemas import (
     BatchSummaryIn,
     BatchSummaryOut,
@@ -93,17 +93,9 @@ def _enqueue_summary_task(
         meta["template_id"] = template_id
     if model:
         meta["model"] = model
-    task = Task(
-        task_id=_new_id(),
-        type="ai_summary",
-        status="pending",
-        progress=0,
-        ref_type="video",
-        ref_id=video_id,
-        meta=meta or None,
-        created_at=datetime.now(timezone.utc),
+    task = create_task(
+        db, "ai_summary", "video", video_id, meta=meta or None
     )
-    db.add(task)
     db.commit()
     db.refresh(task)
     return task
@@ -119,68 +111,62 @@ def create_summary(
     response: Response,
     db: Session = Depends(get_db),
 ):
-    v = db.get(Video, video_id)
-    if v is None:
-        raise BizError("VIDEO_NOT_FOUND", "视频不存在", http_status=404)
+    # AI 总结功能已暂停
+    raise BizError("AI_SUMMARY_DISABLED", "AI 总结功能已暂停", http_status=503)
 
-    _check_template(db, payload.template_id)
+    # v = db.get(Video, video_id)
+    # if v is None:
+    #     raise BizError("VIDEO_NOT_FOUND", "视频不存在", http_status=404)
 
-    existing = db.get(Summary, video_id)
+    # _check_template(db, payload.template_id)
 
-    # 已有总结 + !force → 200 直接返回现有
-    if existing is not None and not payload.force:
-        body = _summary_out(existing).model_dump(mode="json")
-        return JSONResponse(status_code=200, content=body)
+    # existing = db.get(Summary, video_id)
 
-    # 防重
-    dup = _existing_active_summary_task(db, video_id)
-    if dup is not None:
-        raise BizError("TASK_CONFLICT", "已有进行中的总结任务", http_status=409)
+    # # 已有总结 + !force → 200 直接返回现有
+    # if existing is not None and not payload.force:
+    #     body = _summary_out(existing).model_dump(mode="json")
+    #     return JSONResponse(status_code=200, content=body)
 
-    chain: list[SummaryTaskRef] = []
+    # # 防重
+    # dup = _existing_active_summary_task(db, video_id)
+    # if dup is not None:
+    #     raise BizError("TASK_CONFLICT", "已有进行中的总结任务", http_status=409)
 
-    # 无字幕时级联字幕获取
-    sub = db.get(Subtitle, video_id)
-    if sub is None:
-        sub_dup = (
-            db.query(Task)
-            .filter(
-                Task.type == "subtitle_fetch",
-                Task.ref_type == "video",
-                Task.ref_id == video_id,
-                Task.status.in_(["pending", "running"]),
-            )
-            .first()
-        )
-        if sub_dup is None:
-            sub_task = Task(
-                task_id=_new_id(),
-                type="subtitle_fetch",
-                status="pending",
-                progress=0,
-                ref_type="video",
-                ref_id=video_id,
-                created_at=datetime.now(timezone.utc),
-            )
-            db.add(sub_task)
-            db.commit()
-            db.refresh(sub_task)
-            chain.append(SummaryTaskRef(task_id=sub_task.task_id, type="subtitle_fetch"))
+    # chain: list[SummaryTaskRef] = []
 
-    task = _enqueue_summary_task(db, video_id, payload.template_id, payload.model)
+    # # 无字幕时级联字幕获取
+    # sub = db.get(Subtitle, video_id)
+    # if sub is None:
+    #     sub_dup = (
+    #         db.query(Task)
+    #         .filter(
+    #             Task.type == "subtitle_fetch",
+    #             Task.ref_type == "video",
+    #             Task.ref_id == video_id,
+    #             Task.status.in_(["pending", "running"]),
+    #         )
+    #         .first()
+    #     )
+    #     if sub_dup is None:
+    #         sub_task = create_task(db, "subtitle_fetch", "video", video_id)
+    #         db.commit()
+    #         db.refresh(sub_task)
+    #         chain.append(SummaryTaskRef(task_id=sub_task.task_id, type="subtitle_fetch"))
 
-    runner = getattr(request.app.state, "runner", None)
-    if runner is not None:
-        runner.notify()
+    # task = _enqueue_summary_task(db, video_id, payload.template_id, payload.model)
 
-    return JSONResponse(
-        status_code=202,
-        content={
-            "task_id": task.task_id,
-            "type": "ai_summary",
-            "chain": [c.model_dump(mode="json") for c in chain],
-        },
-    )
+    # runner = getattr(request.app.state, "runner", None)
+    # if runner is not None:
+    #     runner.notify()
+
+    # return JSONResponse(
+    #     status_code=202,
+    #     content={
+    #         "task_id": task.task_id,
+    #         "type": "ai_summary",
+    #         "chain": [c.model_dump(mode="json") for c in chain],
+    #     },
+    # )
 
 
 # ---------- 3.4.2 获取总结结果 ----------
@@ -208,22 +194,25 @@ def regenerate_summary(
     request: Request,
     db: Session = Depends(get_db),
 ) -> SummaryRegenerateOut:
-    v = db.get(Video, video_id)
-    if v is None:
-        raise BizError("VIDEO_NOT_FOUND", "视频不存在", http_status=404)
-    _check_template(db, payload.template_id)
+    # AI 总结功能已暂停
+    raise BizError("AI_SUMMARY_DISABLED", "AI 总结功能已暂停", http_status=503)
 
-    dup = _existing_active_summary_task(db, video_id)
-    if dup is not None:
-        raise BizError("TASK_CONFLICT", "已有进行中的总结任务", http_status=409)
+    # v = db.get(Video, video_id)
+    # if v is None:
+    #     raise BizError("VIDEO_NOT_FOUND", "视频不存在", http_status=404)
+    # _check_template(db, payload.template_id)
 
-    task = _enqueue_summary_task(db, video_id, payload.template_id, payload.model)
+    # dup = _existing_active_summary_task(db, video_id)
+    # if dup is not None:
+    #     raise BizError("TASK_CONFLICT", "已有进行中的总结任务", http_status=409)
 
-    runner = getattr(request.app.state, "runner", None)
-    if runner is not None:
-        runner.notify()
+    # task = _enqueue_summary_task(db, video_id, payload.template_id, payload.model)
 
-    return SummaryRegenerateOut(task_id=task.task_id, type="ai_summary")
+    # runner = getattr(request.app.state, "runner", None)
+    # if runner is not None:
+    #     runner.notify()
+
+    # return SummaryRegenerateOut(task_id=task.task_id, type="ai_summary")
 
 
 # ---------- 3.4.4 批量总结 ----------
@@ -238,21 +227,24 @@ def batch_summarize(
     request: Request,
     db: Session = Depends(get_db),
 ) -> BatchSummaryOut:
-    _check_template(db, payload.template_id)
+    # AI 总结功能已暂停
+    raise BizError("AI_SUMMARY_DISABLED", "AI 总结功能已暂停", http_status=503)
 
-    batch_id = "b_" + _new_id()
-    task_ids: list[str] = []
+    # _check_template(db, payload.template_id)
 
-    for vid in payload.video_ids:
-        v = db.get(Video, vid)
-        if v is None:
-            # 跳过不存在的视频 —— 接口文档允许多 video_ids 部分缺失
-            continue
-        task = _enqueue_summary_task(db, vid, payload.template_id, payload.model)
-        task_ids.append(task.task_id)
+    # batch_id = "b_" + _new_id()
+    # task_ids: list[str] = []
 
-    runner = getattr(request.app.state, "runner", None)
-    if runner is not None:
-        runner.notify()
+    # for vid in payload.video_ids:
+    #     v = db.get(Video, vid)
+    #     if v is None:
+    #         # 跳过不存在的视频 —— 接口文档允许多 video_ids 部分缺失
+    #         continue
+    #     task = _enqueue_summary_task(db, vid, payload.template_id, payload.model)
+    #     task_ids.append(task.task_id)
 
-    return BatchSummaryOut(batch_id=batch_id, task_ids=task_ids)
+    # runner = getattr(request.app.state, "runner", None)
+    # if runner is not None:
+    #     runner.notify()
+
+    # return BatchSummaryOut(batch_id=batch_id, task_ids=task_ids)

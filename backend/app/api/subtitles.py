@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
@@ -13,6 +11,7 @@ from app.db import get_db
 from app.errors import BizError
 from app.models import Subtitle, Task, Video
 from app.schemas import SubtitleFetchOut, SubtitleOut
+from app.tasks.service import create_task
 
 router = APIRouter()
 
@@ -62,16 +61,7 @@ def fetch_subtitle(
     if existing is not None:
         raise BizError("TASK_CONFLICT", "已有进行中的字幕获取任务", http_status=409)
 
-    task = Task(
-        task_id=uuid.uuid4().hex[:12],
-        type="subtitle_fetch",
-        status="pending",
-        progress=0,
-        ref_type="video",
-        ref_id=video_id,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(task)
+    task = create_task(db, "subtitle_fetch", "video", video_id)
     db.commit()
     db.refresh(task)
 

@@ -15,7 +15,9 @@ from app.bilibili import search as bili_search
 from app.db import get_db
 from app.errors import BizError
 from app.models import DEFAULT_USER_ID, Task, Uploader, Video
+from app.tasks.service import create_task
 from app.schemas import (
+    UploaderBackfillYearOut,
     UploaderCreateIn,
     UploaderCreateOut,
     UploaderListOut,
@@ -144,19 +146,11 @@ def create_uploader(
     db.add(up)
 
     # 创建首次回溯任务（占位，真实采集属第二期）
-    task = Task(
-        task_id=_new_id(),
-        type="feed_refresh",
-        status="pending",
-        ref_type="uploader",
-        ref_id=up.id,
-        progress=0,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(task)
+    task = create_task(db, "feed_refresh", "uploader", up.id)
 
     db.commit()
     db.refresh(up)
+    db.refresh(task)
 
     runner = getattr(request.app.state, "runner", None)
     if runner is not None:
@@ -258,37 +252,21 @@ def prioritize_uploader_latest(
     enqueued_summary = 0
     task_ids: list[str] = []
 
-    now = datetime.now(timezone.utc)
     for v in videos:
         if not v.has_subtitle and not _active_task_exists(db, "subtitle_fetch", v.id):
-            task = Task(
-                task_id=_new_id(),
-                type="subtitle_fetch",
-                status="pending",
-                progress=0,
-                ref_type="video",
-                ref_id=v.id,
-                priority=PRIORITY_LEVEL,
-                created_at=now,
+            task = create_task(
+                db, "subtitle_fetch", "video", v.id, priority=PRIORITY_LEVEL
             )
-            db.add(task)
             task_ids.append(task.task_id)
             enqueued_subtitle += 1
 
-        if not v.has_summary and not _active_task_exists(db, "ai_summary", v.id):
-            task = Task(
-                task_id=_new_id(),
-                type="ai_summary",
-                status="pending",
-                progress=0,
-                ref_type="video",
-                ref_id=v.id,
-                priority=PRIORITY_LEVEL,
-                created_at=now,
-            )
-            db.add(task)
-            task_ids.append(task.task_id)
-            enqueued_summary += 1
+        # AI 总结功能已暂停：不再排队总结任务
+        # if not v.has_summary and not _active_task_exists(db, "ai_summary", v.id):
+        #     task = create_task(
+        #         db, "ai_summary", "video", v.id, priority=PRIORITY_LEVEL
+        #     )
+        #     task_ids.append(task.task_id)
+        #     enqueued_summary += 1
 
     db.commit()
 
@@ -309,4 +287,70 @@ def prioritize_uploader_latest(
         enqueued_subtitle=enqueued_subtitle,
         enqueued_summary=enqueued_summary,
         task_ids=task_ids,
+    )
+
+
+# ---------- 回溯该 UP 主最近一年视频 ----------
+
+BACKFILL_YEAR_DAYS = 365
+
+
+@router.post(
+    "/uploaders/{uploader_id}/backfill-year",
+    response_model=UploaderBackfillYearOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def backfill_uploader_year(
+    uploader_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> UploaderBackfillYearOut:
+    """为某 UP 主创建 feed_refresh 任务，拉取最近一年的视频。"""
+    up = db.get(Uploader, uploader_id)
+    if up is None or up.user_id != DEFAULT_USER_ID:
+        raise BizError("UPLOADER_NOT_FOUND", "UP主不存在", http_status=404)
+
+    existing = db.execute(
+        select(Task.task_id).where(
+            Task.type == "feed_refresh",
+            Task.ref_type == "uploader",
+            Task.ref_id == up.id,
+            Task.status.in_(["pending", "running"]),
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return UploaderBackfillYearOut(
+            task_id=existing,
+            type="feed_refresh",
+            days_back=BACKFILL_YEAR_DAYS,
+        )
+
+    task = create_task(
+        db,
+        "feed_refresh",
+        "uploader",
+        up.id,
+        meta={
+            "days_back": BACKFILL_YEAR_DAYS,
+            "mode": "backfill-year",
+        },
+    )
+    db.commit()
+    db.refresh(task)
+
+    runner = getattr(request.app.state, "runner", None)
+    if runner is not None:
+        runner.notify()
+
+    log.info(
+        "backfill_year uploader=%s days_back=%d task_id=%s",
+        up.bilibili_uid,
+        BACKFILL_YEAR_DAYS,
+        task.task_id,
+    )
+
+    return UploaderBackfillYearOut(
+        task_id=task.task_id,
+        type=task.type,
+        days_back=BACKFILL_YEAR_DAYS,
     )

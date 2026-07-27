@@ -11,6 +11,7 @@ import respx
 
 from app.bilibili import wbi
 from app.models import Subtitle, SystemConfig, Task, Uploader, Video
+from app.tasks import handlers as task_handlers
 from app.tasks.runner import TaskRunner
 
 
@@ -152,7 +153,7 @@ async def test_auto_summarize_enqueues_summary_only_for_subtitled_videos(db_sess
         ))
         db.commit()
 
-        runner._enqueue_auto_summaries(db, up)
+        task_handlers._enqueue_auto_summaries(db, up)
 
         tasks = db.query(Task).filter(Task.type == "ai_summary").all()
         assert len(tasks) == 1
