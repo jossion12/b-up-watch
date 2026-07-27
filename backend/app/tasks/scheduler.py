@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -41,6 +41,7 @@ class TaskScheduler:
         batch_size: int | None = None,
         backfill_extra_days: int | None = None,
         backfill_max_pages: int | None = None,
+        failed_task_backoff_sec: float | None = None,
         session_factory=None,
     ) -> None:
         self.runner = runner
@@ -51,6 +52,7 @@ class TaskScheduler:
         self.batch_size = batch_size if batch_size is not None else settings.scheduler_batch_size
         self.backfill_extra_days = backfill_extra_days if backfill_extra_days is not None else settings.backfill_extra_days
         self.backfill_max_pages = backfill_max_pages if backfill_max_pages is not None else settings.backfill_max_pages
+        self.failed_task_backoff_sec = failed_task_backoff_sec if failed_task_backoff_sec is not None else settings.scheduler_failed_task_backoff_sec
         self._session_factory = session_factory or SessionLocal
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
@@ -168,6 +170,20 @@ class TaskScheduler:
             created_at=datetime.now(timezone.utc),
         )
 
+    def _recent_failed_task(self, task_type: str) -> select:
+        """构造子查询：同一视频在退避时间内是否存在同类型失败任务。"""
+        return (
+            select(Task)
+            .where(
+                Task.type == task_type,
+                Task.ref_type == "video",
+                Task.ref_id == Video.id,
+                Task.status == "failed",
+                Task.finished_at >= datetime.now(timezone.utc) - timedelta(seconds=self.failed_task_backoff_sec),
+            )
+            .exists()
+        )
+
     async def _enqueue_subtitle_tasks(self) -> int:
         """为尚未获取字幕的视频创建 subtitle_fetch 任务。"""
         with self._session_factory() as db:
@@ -181,12 +197,14 @@ class TaskScheduler:
                 )
                 .exists()
             )
+            recent_failed = self._recent_failed_task("subtitle_fetch")
             videos = db.execute(
                 select(Video)
                 .where(
                     Video.user_id == DEFAULT_USER_ID,
                     Video.has_subtitle.is_(False),
                     ~active_subtitle,
+                    ~recent_failed,
                 )
                 .order_by(Video.published_at.desc())
                 .limit(self.batch_size)
@@ -213,6 +231,7 @@ class TaskScheduler:
                 )
                 .exists()
             )
+            recent_failed = self._recent_failed_task("ai_summary")
             videos = db.execute(
                 select(Video)
                 .where(
@@ -220,6 +239,7 @@ class TaskScheduler:
                     Video.has_subtitle.is_(True),
                     Video.has_summary.is_(False),
                     ~active_summary,
+                    ~recent_failed,
                 )
                 .order_by(Video.published_at.desc())
                 .limit(self.batch_size)

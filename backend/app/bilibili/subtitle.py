@@ -60,9 +60,15 @@ async def download_subtitle_json(url: str) -> list[dict]:
     """下载字幕 JSON，转换为标准 lines。
 
     返回 [{"start_sec":..., "end_sec":..., "text":...}, ...]
+
+    B 站返回的 subtitle_url 可能是协议相对 URL（//...）、裸路径或已带协议。
+    这里统一补全为 https://，避免 httpx 因缺少协议头而报错。
     """
+    url = url.strip()
     if url.startswith("//"):
         url = "https:" + url
+    elif not url.startswith(("http://", "https://")):
+        url = "https://" + url
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as c:
         resp = await c.get(url)
         resp.raise_for_status()

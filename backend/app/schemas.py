@@ -143,9 +143,11 @@ class TaskStatsOut(_Base):
     subtitle_total: int
     subtitle_pending: int
     subtitle_completed: int
+    subtitle_failed: int
     summary_total: int
     summary_pending: int
     summary_completed: int
+    summary_failed: int
 
 
 # ---------- 字幕 ----------

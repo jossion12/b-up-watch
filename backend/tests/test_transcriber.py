@@ -102,6 +102,32 @@ def test_asr_singleton(monkeypatch):
     asr_mod.reset_for_test()
 
 
+def test_asr_load_model_cuda_fallback_when_unavailable(monkeypatch):
+    """CUDA 不可用时自动降级到 CPU，避免 Torch not compiled with CUDA enabled。"""
+    asr_mod.reset_for_test()
+    fake_model = MagicMock(name="QwenModel")
+    fake_cls = MagicMock()
+    fake_cls.from_pretrained.return_value = fake_model
+
+    class _FakeQwenMod:
+        Qwen3ASRModel = fake_cls
+
+    monkeypatch.setitem(sys.modules, "qwen_asr", _FakeQwenMod())
+
+    fake_torch = MagicMock()
+    fake_torch.cuda.is_available.return_value = False
+    fake_torch.float32 = "float32"
+    fake_torch.bfloat16 = "bfloat16"
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    m = asr_mod.load_model("/fake/path", device="cuda:0")
+    assert m is fake_model
+    call_kwargs = fake_cls.from_pretrained.call_args[1]
+    assert call_kwargs["device_map"] == "cpu"
+    assert call_kwargs["dtype"] == "float32"
+    asr_mod.reset_for_test()
+
+
 # ============== pipeline 内部纯函数 ==============
 
 def test_get_audio_duration_parses_ffprobe(monkeypatch):

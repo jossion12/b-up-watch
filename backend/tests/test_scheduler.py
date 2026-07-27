@@ -106,6 +106,66 @@ async def test_scheduler_skips_videos_with_active_subtitle_task(db_session_facto
 
 
 @pytest.mark.asyncio
+async def test_scheduler_skips_videos_with_recent_failed_subtitle_task(db_session_factory):
+    runner = _FakeRunner()
+    scheduler = TaskScheduler(
+        runner,
+        session_factory=db_session_factory,
+        failed_task_backoff_sec=600,
+    )
+
+    up = _make_uploader(db_session_factory)
+    v = _make_video(db_session_factory, up, has_subtitle=False)
+
+    with db_session_factory() as db:
+        db.add(
+            Task(
+                task_id=uuid.uuid4().hex[:12],
+                type="subtitle_fetch",
+                status="failed",
+                ref_type="video",
+                ref_id=v.id,
+                finished_at=datetime.now(timezone.utc) - timedelta(seconds=30),
+                created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+            )
+        )
+        db.commit()
+
+    created = await scheduler._enqueue_subtitle_tasks()
+    assert created == 0
+
+
+@pytest.mark.asyncio
+async def test_scheduler_enqueues_subtitle_after_failed_backoff(db_session_factory):
+    runner = _FakeRunner()
+    scheduler = TaskScheduler(
+        runner,
+        session_factory=db_session_factory,
+        failed_task_backoff_sec=60,
+    )
+
+    up = _make_uploader(db_session_factory)
+    v = _make_video(db_session_factory, up, has_subtitle=False)
+
+    with db_session_factory() as db:
+        db.add(
+            Task(
+                task_id=uuid.uuid4().hex[:12],
+                type="subtitle_fetch",
+                status="failed",
+                ref_type="video",
+                ref_id=v.id,
+                finished_at=datetime.now(timezone.utc) - timedelta(seconds=120),
+                created_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+            )
+        )
+        db.commit()
+
+    created = await scheduler._enqueue_subtitle_tasks()
+    assert created == 1
+
+
+@pytest.mark.asyncio
 async def test_scheduler_enqueues_summary_tasks_only_when_subtitle_ready(db_session_factory):
     runner = _FakeRunner()
     scheduler = TaskScheduler(runner, session_factory=db_session_factory)
@@ -140,6 +200,36 @@ async def test_scheduler_skips_videos_with_active_summary_task(db_session_factor
                 ref_type="video",
                 ref_id=v.id,
                 created_at=datetime.now(timezone.utc),
+            )
+        )
+        db.commit()
+
+    created = await scheduler._enqueue_summary_tasks()
+    assert created == 0
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_videos_with_recent_failed_summary_task(db_session_factory):
+    runner = _FakeRunner()
+    scheduler = TaskScheduler(
+        runner,
+        session_factory=db_session_factory,
+        failed_task_backoff_sec=600,
+    )
+
+    up = _make_uploader(db_session_factory)
+    v = _make_video(db_session_factory, up, has_subtitle=True, has_summary=False)
+
+    with db_session_factory() as db:
+        db.add(
+            Task(
+                task_id=uuid.uuid4().hex[:12],
+                type="ai_summary",
+                status="failed",
+                ref_type="video",
+                ref_id=v.id,
+                finished_at=datetime.now(timezone.utc) - timedelta(seconds=30),
+                created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
             )
         )
         db.commit()

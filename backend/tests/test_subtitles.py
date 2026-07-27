@@ -72,6 +72,17 @@ async def test_download_subtitle_json_protocol_relative_url():
     assert lines[0]["text"] == "ok"
 
 
+@respx.mock
+@pytest.mark.asyncio
+async def test_download_subtitle_json_bare_path_url():
+    """裸路径（无协议头、无前导 //）应自动补 https:// 前缀。"""
+    respx.get("https://aisubtitle.hdslb.com/z.json").mock(
+        return_value=httpx.Response(200, json={"body": [{"from": 1.0, "to": 2.0, "content": "bare"}]})
+    )
+    lines = await bili_sub.download_subtitle_json("aisubtitle.hdslb.com/z.json")
+    assert lines[0]["text"] == "bare"
+
+
 # ============== 时长校验 ==============
 
 def test_subtitle_span_seconds():

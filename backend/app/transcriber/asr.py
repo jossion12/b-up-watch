@@ -72,11 +72,19 @@ def load_model(model_path: str, device: str = "cpu", max_new_tokens: int = 4096)
             _load_error = "未配置 QWEN_ASR_MODEL_PATH"
             raise RuntimeError(_load_error)
 
-        log.info("loading Qwen3-ASR model from %s on %s ...", model_path, device)
-        dtype = _resolve_dtype(device)
+        requested_device = device or "cpu"
+        if requested_device.lower().startswith("cuda") and not torch.cuda.is_available():
+            log.warning(
+                "requested ASR device %s but CUDA is not available, falling back to cpu",
+                requested_device,
+            )
+            requested_device = "cpu"
+
+        log.info("loading Qwen3-ASR model from %s on %s ...", model_path, requested_device)
+        dtype = _resolve_dtype(requested_device)
         kwargs: dict[str, Any] = {
             "dtype": dtype,
-            "device_map": device,
+            "device_map": requested_device,
             "max_new_tokens": max_new_tokens,
             "local_files_only": True,
         }

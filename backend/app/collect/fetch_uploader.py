@@ -52,6 +52,10 @@ async def fetch_uploader_videos(
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
     client = get_client()
 
+    # 防御：SQLite 读出的 DateTime(timezone=True) 可能丢失 tzinfo，补回 UTC。
+    # 所有后续涉及 last_video_at 的 datetime 比较都依赖它是 aware。
+    uploader.last_video_at = _ensure_aware(uploader.last_video_at)
+
     # 回填 UP 主真实昵称/头像/粉丝数/简介（首次或占位时更新）
     await _refresh_uploader_profile(db, uploader, client)
 
@@ -189,6 +193,7 @@ async def fetch_uploader_videos(
             break
 
     if latest_pub is not None:
+        latest_pub = _ensure_aware(latest_pub)
         current = _ensure_aware(uploader.last_video_at)
         if current is None or latest_pub > current:
             uploader.last_video_at = latest_pub

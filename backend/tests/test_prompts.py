@@ -82,18 +82,38 @@ def test_validate_output_missing_brief():
         prompts.validate_summary_output(obj)
 
 
-def test_validate_output_points_out_of_range():
+def test_validate_output_points_accept_fewer_and_truncate():
+    """points 允许 1-5 条；超过 5 条时截断到 5 条。"""
     obj = _valid_obj()
     obj["points"] = ["only"]
+    out = prompts.validate_summary_output(obj)
+    assert out["points"] == ["only"]
+
+    obj = _valid_obj()
+    obj["points"] = [f"p{i}" for i in range(10)]
+    out = prompts.validate_summary_output(obj)
+    assert len(out["points"]) == 5
+
+
+def test_validate_output_points_empty_raises():
+    obj = _valid_obj()
+    obj["points"] = []
     with pytest.raises(prompts.TemplateError, match="points"):
         prompts.validate_summary_output(obj)
 
 
-def test_validate_output_stance_bad_sentiment():
+def test_validate_output_stance_bad_sentiment_defaults_to_neutral():
     obj = _valid_obj()
     obj["stance"]["sentiment"] = "angry"
-    with pytest.raises(prompts.TemplateError, match="sentiment"):
-        prompts.validate_summary_output(obj)
+    out = prompts.validate_summary_output(obj)
+    assert out["stance"]["sentiment"] == "neutral"
+
+
+def test_validate_output_stance_chinese_sentiment_mapped():
+    obj = _valid_obj()
+    obj["stance"]["sentiment"] = "乐观"
+    out = prompts.validate_summary_output(obj)
+    assert out["stance"]["sentiment"] == "positive"
 
 
 def test_validate_output_topics_empty():

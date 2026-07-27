@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, Loader2, Clock, Film, Sparkles, Flame } from 'lucide-react'
+import { useNavigate } from 'react-router'
+import { Activity, ArrowLeft, Loader2, Clock, Film, Sparkles, Flame } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { jobsApi, tasksApi, type JobItem, type BackendTask, type TaskStatsOut } from '@/lib/api'
 import type { Uploader, Video } from '@/types'
@@ -35,6 +37,7 @@ interface JobsProps {
 }
 
 export default function Jobs({ videos, uploaders }: JobsProps) {
+  const navigate = useNavigate()
   const [jobs, setJobs] = useState<JobItem[]>([])
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState<Record<string, boolean>>({})
@@ -211,6 +214,9 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
   return (
     <div className="h-full flex flex-col bg-background">
       <header className="h-14 border-b bg-card flex items-center px-4 gap-3 shrink-0">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/')}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
         <Activity className="h-4 w-4 text-muted-foreground" />
         <h1 className="font-semibold text-sm">任务调度</h1>
         {(error || tasksError) && (
@@ -320,6 +326,16 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
                     </div>
                     <div className="text-xs text-muted-foreground">已完成</div>
                   </div>
+                  <div>
+                    <div className="text-2xl font-semibold text-red-500">
+                      {statsLoading || !stats ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        stats.subtitle_failed
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">失败</div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -361,6 +377,16 @@ export default function Jobs({ videos, uploaders }: JobsProps) {
                       )}
                     </div>
                     <div className="text-xs text-muted-foreground">已完成</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold text-red-500">
+                      {statsLoading || !stats ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        stats.summary_failed
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">失败</div>
                   </div>
                 </div>
               </CardContent>

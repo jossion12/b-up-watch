@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Routes, Route, useNavigate } from 'react-router'
-import { Tv, LayoutList, LineChart, Activity, RefreshCw, Bell, Settings, Loader2 } from 'lucide-react'
+import { Tv, LayoutList, LineChart, Activity, AlertCircle, RefreshCw, Bell, Settings, Loader2 } from 'lucide-react'
 import AddUploaderDialog from '@/sections/AddUploaderDialog'
 import { cn } from '@/lib/utils'
 import SwimlaneTimeline from '@/sections/SwimlaneTimeline'
 import Timeline from '@/sections/Timeline'
 import Insights from '@/sections/Insights'
 import Jobs from '@/sections/Jobs'
+import FailedTasks from '@/sections/FailedTasks'
 import VideoPage from '@/sections/VideoPage'
 import UpFilter from '@/sections/UpFilter'
 import CategoryFilter from '@/sections/CategoryFilter'
@@ -233,6 +234,12 @@ export default function App() {
                 >
                   <Activity className="h-3.5 w-3.5" /> 任务
                 </button>
+                <button
+                  onClick={() => navigate('/failed-tasks')}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <AlertCircle className="h-3.5 w-3.5" /> 失败任务
+                </button>
               </div>
 
               <div className="flex-1" />
@@ -343,6 +350,7 @@ export default function App() {
         }
       />
       <Route path="/jobs" element={<Jobs videos={videos} uploaders={uploaders} />} />
+      <Route path="/failed-tasks" element={<FailedTasks videos={videos} uploaders={uploaders} />} />
     </Routes>
   )
 }

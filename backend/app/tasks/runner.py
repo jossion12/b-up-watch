@@ -333,6 +333,7 @@ class TaskRunner:
                 Video.user_id == DEFAULT_USER_ID,
                 Video.uploader_id == up.id,
                 Video.status.in_(["new", "subtitled"]),
+                Video.has_subtitle.is_(True),
                 Video.has_summary.is_(False),
                 ~active_summary,
             )

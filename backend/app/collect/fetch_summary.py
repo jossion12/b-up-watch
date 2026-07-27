@@ -88,7 +88,16 @@ async def summarize_video(
             "role": "system",
             "content": (
                 "你是视频内容分析助手。请严格只输出一个合法的 JSON 对象，"
-                "不要添加任何解释、markdown 代码块（如 ```json）或其他额外文本。"
+                "不要添加任何解释、markdown 代码块（如 ```json）或其他额外文本。\n\n"
+                "输出必须包含以下字段，且不允许为空：\n"
+                '- "brief": 字符串，150字内摘要\n'
+                '- "points": 字符串数组，3-5条要点\n'
+                '- "stance": 对象，包含:\n'
+                '  - "label": 字符串，观点标签，不能为空\n'
+                '  - "sentiment": 字符串，必须是 positive/neutral/negative/mixed 四选一\n'
+                '  - "detail": 字符串，观点详细阐述\n'
+                '- "topics": 字符串数组，3-5个话题标签\n'
+                '- "quote": 字符串，一句代表性引用\n'
             ),
         },
         {"role": "user", "content": rendered},

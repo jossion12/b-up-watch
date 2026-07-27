@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     scheduler_summary_interval_sec: float = 120.0
     scheduler_backfill_interval_sec: float = 900.0
     scheduler_batch_size: int = 10
+    scheduler_failed_task_backoff_sec: float = 1800.0
     backfill_extra_days: int = 30
     backfill_max_pages: int = 10
 
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = ""
     llm_timeout_sec: float = 300.0
+    llm_max_tokens: int = 4096
 
     # ASR（本地 Qwen3-ASR）
     qwen_asr_model_path: str = ""

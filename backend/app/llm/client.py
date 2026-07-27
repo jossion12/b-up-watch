@@ -52,6 +52,7 @@ async def chat(
         "messages": messages,
         "temperature": temperature,
         "response_format": {"type": "json_object"},
+        "max_tokens": settings.llm_max_tokens,
     }
 
     try:

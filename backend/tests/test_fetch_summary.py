@@ -170,3 +170,56 @@ def test_render_with_duration_format():
         {"duration": "12:34", "title": "x", "uploader": "y", "tags": "", "subtitle": ""},
     )
     assert rendered == "时长: 12:34"
+
+
+def test_validate_summary_output_fills_missing_stance_label():
+    """stance.label 缺失或为空时，默认填充为 '未明确'。"""
+    raw = {
+        "brief": "brief",
+        "points": ["p1"],
+        "stance": {"label": "", "sentiment": "positive", "detail": "detail"},
+        "topics": ["t1"],
+        "quote": "quote",
+    }
+    obj = llm_prompts.validate_summary_output(raw)
+    assert obj["stance"]["label"] == "未明确"
+
+
+def test_validate_summary_output_normalizes_chinese_sentiment():
+    """sentiment 为中文情感词时，映射为英文枚举。"""
+    raw = {
+        "brief": "brief",
+        "points": ["p1"],
+        "stance": {"label": "看好", "sentiment": "乐观", "detail": "detail"},
+        "topics": ["t1"],
+        "quote": "quote",
+    }
+    obj = llm_prompts.validate_summary_output(raw)
+    assert obj["stance"]["sentiment"] == "positive"
+
+
+def test_validate_summary_output_defaults_invalid_sentiment():
+    """sentiment 无法识别时，默认使用 neutral。"""
+    raw = {
+        "brief": "brief",
+        "points": ["p1"],
+        "stance": {"label": "x", "sentiment": "unknown", "detail": "detail"},
+        "topics": ["t1"],
+        "quote": "quote",
+    }
+    obj = llm_prompts.validate_summary_output(raw)
+    assert obj["stance"]["sentiment"] == "neutral"
+
+
+def test_validate_summary_output_accepts_fewer_points_and_truncates_topics():
+    """points/topics 数量在 1-5 之间均可，超过 5 条时截断。"""
+    raw = {
+        "brief": "brief",
+        "points": ["p1"],
+        "stance": {"label": "x", "sentiment": "neutral", "detail": "detail"},
+        "topics": ["t1", "t2", "t3", "t4", "t5", "t6"],
+        "quote": "quote",
+    }
+    obj = llm_prompts.validate_summary_output(raw)
+    assert len(obj["points"]) == 1
+    assert len(obj["topics"]) == 5

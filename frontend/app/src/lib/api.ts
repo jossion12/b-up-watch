@@ -229,19 +229,24 @@ export interface TaskStatsOut {
   subtitle_total: number
   subtitle_pending: number
   subtitle_completed: number
+  subtitle_failed: number
   summary_total: number
   summary_pending: number
   summary_completed: number
+  summary_failed: number
 }
 
 export const tasksApi = {
   get: (taskId: string) => request<BackendTask>(`/tasks/${taskId}`),
-  list: (status?: string[]) => {
+  list: (status?: string[], limit?: number) => {
     const sp = new URLSearchParams()
     if (status?.length) sp.set('status', status.join(','))
+    if (limit) sp.set('limit', String(limit))
     return request<{ items: BackendTask[]; total: number }>(`/tasks?${sp.toString()}`)
   },
   stats: () => request<TaskStatsOut>('/tasks/stats'),
+  retry: (taskId: string) =>
+    request<BackendTask>(`/tasks/${taskId}/retry`, { method: 'POST' }),
 }
 
 // ---------- 模板 ----------

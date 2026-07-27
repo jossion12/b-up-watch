@@ -19,6 +19,11 @@ SENTIMENT_ALIASES = {
     "消极": "negative",
     "负面": "negative",
     "复杂": "mixed",
+    "看好": "positive",
+    "乐观": "positive",
+    "悲观": "negative",
+    "看空": "negative",
+    "不看好": "negative",
 }
 
 
@@ -61,41 +66,55 @@ def _leftover_placeholders(s: str) -> list[str]:
 
 
 def validate_summary_output(obj: dict) -> dict:
-    """校验 LLM 输出符合接口文档 2.4 的 Summary 结构。返回清洗后的对象。"""
+    """校验并清洗 LLM 输出，使其符合接口文档 2.4 的 Summary 结构。
+
+    对常见的小错误做容错（如 stance.label 为空、sentiment 用中文、
+    points/topics 数量略少），尽量降低因模型输出轻微越界导致的任务失败。
+    """
     if not isinstance(obj, dict):
         raise TemplateError("LLM 输出不是 JSON 对象")
 
     brief = obj.get("brief")
     if not isinstance(brief, str) or not brief.strip():
         raise TemplateError("brief 缺失或为空")
-    if len(brief) > 800:
-        # 文档要求 150 字内；这里放宽到 800 容忍模型
-        pass
 
     points = obj.get("points")
-    if not isinstance(points, list) or not (3 <= len(points) <= 5):
-        raise TemplateError("points 应为 3-5 条")
-    if not all(isinstance(p, str) and p.strip() for p in points):
-        raise TemplateError("points 应为非空字符串列表")
+    if not isinstance(points, list):
+        raise TemplateError("points 应为列表")
+    points = [str(p).strip() for p in points if p is not None and str(p).strip()]
+    if len(points) == 0:
+        raise TemplateError("points 至少 1 条")
+    obj["points"] = points[:5]
 
     stance = obj.get("stance")
     if not isinstance(stance, dict):
         raise TemplateError("stance 缺失")
-    if not isinstance(stance.get("label"), str) or not stance["label"].strip():
-        raise TemplateError("stance.label 缺失")
+
+    label = stance.get("label")
+    if not isinstance(label, str) or not label.strip():
+        stance["label"] = "未明确"
+    else:
+        stance["label"] = label.strip()
+
     sentiment = stance.get("sentiment")
     normalized = SENTIMENT_ALIASES.get(sentiment, sentiment)
     if normalized not in VALID_SENTIMENTS:
-        raise TemplateError(f"stance.sentiment 非法: {sentiment!r}")
+        normalized = "neutral"
     stance["sentiment"] = normalized
-    if not isinstance(stance.get("detail"), str):
-        raise TemplateError("stance.detail 缺失")
+
+    detail = stance.get("detail")
+    if not isinstance(detail, str) or not detail.strip():
+        stance["detail"] = ""
+    else:
+        stance["detail"] = detail.strip()
 
     topics = obj.get("topics")
-    if not isinstance(topics, list) or not (3 <= len(topics) <= 5):
-        raise TemplateError("topics 应为 3-5 个")
-    if not all(isinstance(t, str) and t.strip() for t in topics):
-        raise TemplateError("topics 应为非空字符串列表")
+    if not isinstance(topics, list):
+        raise TemplateError("topics 应为列表")
+    topics = [str(t).strip() for t in topics if t is not None and str(t).strip()]
+    if len(topics) == 0:
+        raise TemplateError("topics 至少 1 个")
+    obj["topics"] = topics[:5]
 
     quote = obj.get("quote")
     if not isinstance(quote, str) or not quote.strip():
