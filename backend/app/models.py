@@ -146,7 +146,7 @@ class SummaryTemplate(Base):
 
 # ============== 任务 ==============
 
-TASK_TYPE = ("subtitle_fetch", "ai_summary", "feed_refresh", "whisper_transcribe", "video_stats_refresh")
+TASK_TYPE = ("subtitle_fetch", "ai_summary", "feed_refresh", "whisper_transcribe", "video_stats_refresh", "rag_ingest")
 TASK_STATUS = ("pending", "running", "success", "failed")
 
 

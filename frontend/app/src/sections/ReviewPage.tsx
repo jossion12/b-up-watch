@@ -7,6 +7,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -18,7 +19,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
-import { ragApi, type RagSearchItem, type RagChatChunk } from '@/lib/api'
+import { ragApi, tasksApi, type RagSearchItem, type RagChatChunk, type BackendTask } from '@/lib/api'
+import { useWebSocket } from '@/hooks/useWebSocket'
 import type { Uploader } from '@/types'
 
 interface ReviewPageProps {
@@ -34,6 +36,7 @@ export default function ReviewPage({ uploaders }: ReviewPageProps) {
   const [loading, setLoading] = useState(false)
   const [ingesting, setIngesting] = useState(false)
   const [stats, setStats] = useState({ total_chunks: 0 })
+  const [ingestTask, setIngestTask] = useState<BackendTask | null>(null)
   const [results, setResults] = useState<RagSearchItem[]>([])
   const [searched, setSearched] = useState(false)
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; content: string; chunks?: RagChatChunk[] }[]>([])
@@ -45,6 +48,14 @@ export default function ReviewPage({ uploaders }: ReviewPageProps) {
   )
 
   const upName = currentUploader?.name || '未知UP主'
+
+  const isIngestActive = useMemo(
+    () =>
+      !!ingestTask &&
+      (ingestTask.status === 'pending' || ingestTask.status === 'running') &&
+      ingestTask.ref_id === uploaderId,
+    [ingestTask, uploaderId]
+  )
 
   const loadStats = async () => {
     if (!uploaderId) return
@@ -58,12 +69,13 @@ export default function ReviewPage({ uploaders }: ReviewPageProps) {
 
   useEffect(() => {
     loadStats()
-    // 切换 UP 主时清空搜索/对话状态
+    // 切换 UP 主时清空搜索/对话状态与导入任务跟踪
     setQuery('')
     setChatInput('')
     setResults([])
     setSearched(false)
     setChatHistory([])
+    setIngestTask(null)
   }, [uploaderId])
 
   useEffect(() => {
@@ -71,6 +83,49 @@ export default function ReviewPage({ uploaders }: ReviewPageProps) {
       bottomRef.current.scrollIntoView({ behavior: 'smooth' })
     }
   }, [chatHistory])
+
+  // 轮询 rag_ingest 任务状态
+  useEffect(() => {
+    if (!isIngestActive || !ingestTask) return
+    const poll = async () => {
+      try {
+        const task = await tasksApi.get(ingestTask.task_id)
+        setIngestTask(task)
+        if (task.status === 'success') {
+          await loadStats()
+          const meta = task.meta || {}
+          alert(
+            `导入完成：${meta.files ?? 0} 个文件，${meta.segments ?? 0} 个话题段，${meta.chunks ?? 0} 个观点卡片`
+          )
+        } else if (task.status === 'failed') {
+          alert(task.error?.message || '导入失败')
+        }
+      } catch {
+        // 轮询失败不中断，等待下次重试
+      }
+    }
+    poll()
+    const id = setInterval(poll, 2000)
+    return () => clearInterval(id)
+  }, [isIngestActive, ingestTask?.task_id])
+
+  useWebSocket((msg) => {
+    if (msg.event === 'task.updated') {
+      const task = msg.payload as BackendTask
+      if (task.type === 'rag_ingest' && task.ref_id === uploaderId) {
+        setIngestTask(task)
+        if (task.status === 'success') {
+          loadStats()
+          const meta = task.meta || {}
+          alert(
+            `导入完成：${meta.files ?? 0} 个文件，${meta.segments ?? 0} 个话题段，${meta.chunks ?? 0} 个观点卡片`
+          )
+        } else if (task.status === 'failed') {
+          alert(task.error?.message || '导入失败')
+        }
+      }
+    }
+  })
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -105,12 +160,12 @@ export default function ReviewPage({ uploaders }: ReviewPageProps) {
   }
 
   const handleIngest = async () => {
-    if (!uploaderId) return
+    if (!uploaderId || isIngestActive) return
     setIngesting(true)
     try {
       const res = await ragApi.ingest(uploaderId)
-      await loadStats()
-      alert(`导入完成：${res.files} 个文件，${res.segments} 个话题段，${res.chunks} 个观点卡片`)
+      const task = await tasksApi.get(res.task_id)
+      setIngestTask(task)
     } catch (e: any) {
       alert(e?.error?.message || '导入失败')
     } finally {
@@ -194,15 +249,25 @@ export default function ReviewPage({ uploaders }: ReviewPageProps) {
           <Database className="h-3.5 w-3.5" />
           <span>已导入 {stats.total_chunks} 条观点卡片</span>
         </div>
+        {isIngestActive && ingestTask && (
+          <div className="flex items-center gap-2 w-48">
+            <Progress value={ingestTask.progress} className="h-1.5 flex-1" />
+            <span className="text-xs text-muted-foreground shrink-0">{ingestTask.progress}%</span>
+          </div>
+        )}
         <Button
           variant="outline"
           size="sm"
           onClick={handleIngest}
-          disabled={ingesting}
+          disabled={ingesting || isIngestActive}
           className="text-xs gap-1.5"
         >
-          {ingesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          重新导入
+          {ingesting || isIngestActive ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
+          {isIngestActive ? '导入中' : '重新导入'}
         </Button>
       </header>
 

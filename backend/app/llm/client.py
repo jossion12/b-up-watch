@@ -25,6 +25,7 @@ async def chat(
     model: Optional[str] = None,
     temperature: float = 0.2,
     timeout: Optional[float] = None,
+    json_mode: Optional[bool] = None,
 ) -> tuple[dict, dict]:
     """调用 OpenAI 兼容 /chat/completions，返回 (parsed_json, usage)。"""
     settings = get_settings()
@@ -32,6 +33,7 @@ async def chat(
     api_key = settings.llm_api_key
     use_model = model or settings.llm_model
     use_timeout = timeout if timeout is not None else settings.llm_timeout_sec or 300.0
+    use_json_mode = json_mode if json_mode is not None else settings.llm_json_mode
 
     if not base_url:
         raise BizError(
@@ -47,46 +49,67 @@ async def chat(
     }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    payload = {
-        "model": use_model,
-        "messages": messages,
-        "temperature": temperature,
-        "response_format": {"type": "json_object"},
-        "max_tokens": settings.llm_max_tokens,
-    }
 
-    try:
-        async with httpx.AsyncClient(timeout=use_timeout) as c:
-            resp = await c.post(f"{base_url}/chat/completions", json=payload, headers=headers)
-    except httpx.HTTPError as e:
-        raise BizError("LLM_UNREACHABLE", f"LLM 不可达: {e}", http_status=502) from e
+    working_messages = list(messages)
+    last_raw_preview = ""
+    for attempt in range(2):
+        payload: dict[str, Any] = {
+            "model": use_model,
+            "messages": working_messages,
+            "temperature": temperature,
+            "max_tokens": settings.llm_max_tokens,
+        }
+        if use_json_mode:
+            payload["response_format"] = {"type": "json_object"}
 
-    if resp.status_code >= 400:
-        # 透出上游错误（截断）
-        snippet = (resp.text or "")[:300]
-        raise BizError(
-            "LLM_ERROR",
-            f"LLM 返回 {resp.status_code}: {snippet}",
-            http_status=502,
+        try:
+            async with httpx.AsyncClient(timeout=use_timeout) as c:
+                resp = await c.post(f"{base_url}/chat/completions", json=payload, headers=headers)
+        except httpx.HTTPError as e:
+            raise BizError("LLM_UNREACHABLE", f"LLM 不可达: {e}", http_status=502) from e
+
+        if resp.status_code >= 400:
+            # 透出上游错误（截断）
+            snippet = (resp.text or "")[:300]
+            raise BizError(
+                "LLM_ERROR",
+                f"LLM 返回 {resp.status_code}: {snippet}",
+                http_status=502,
+            )
+
+        data = resp.json()
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise BizError("LLM_BAD_RESPONSE", f"LLM 响应结构异常: {e}", http_status=502) from e
+
+        usage = data.get("usage") or {}
+        parsed = _extract_json(content)
+        if parsed is not None:
+            return parsed, usage
+
+        last_raw_preview = content[:500]
+        log.warning(
+            "LLM output is not valid JSON (attempt %d), preview: %r",
+            attempt + 1,
+            last_raw_preview,
         )
 
-    data = resp.json()
-    try:
-        content = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as e:
-        raise BizError("LLM_BAD_RESPONSE", f"LLM 响应结构异常: {e}", http_status=502) from e
+        if attempt == 0:
+            working_messages = working_messages + [
+                {
+                    "role": "user",
+                    "content": "请只输出合法 JSON，不要添加任何解释或 markdown 代码块。",
+                }
+            ]
+            continue
 
-    usage = data.get("usage") or {}
-    parsed = _extract_json(content)
-    if parsed is None:
-        log.warning("LLM output is not valid JSON, preview: %r", content[:500])
-        raise BizError(
-            "LLM_BAD_JSON",
-            "LLM 输出无法解析为 JSON",
-            http_status=502,
-            details={"raw_preview": content[:500]},
-        )
-    return parsed, usage
+    raise BizError(
+        "LLM_BAD_JSON",
+        "LLM 输出无法解析为 JSON",
+        http_status=502,
+        details={"raw_preview": last_raw_preview},
+    )
 
 
 _CODE_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)

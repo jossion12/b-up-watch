@@ -158,6 +158,11 @@ class TaskStatsOut(_Base):
     summary_failed: int
 
 
+class RagIngestTaskOut(_Base):
+    task_id: str
+    type: str
+
+
 # ---------- 字幕 ----------
 
 class SubtitleLine(_Base):

@@ -20,25 +20,25 @@ from app.collect import fetch_summary as collect_summary
 from app.collect import fetch_uploader as collect_fetch
 from app.errors import BizError
 from app.models import DEFAULT_USER_ID, Subtitle, SystemConfig, Task, Uploader, Video
-from app.rag.service import ingest_file
+from app.rag.service import ingest_uploader, ingest_video
 from app.tasks.registry import task_handler
 from app.transcriber import pipeline as asr_pipeline
+from app.websocket import push_task_updated_sync
 
 log = logging.getLogger(__name__)
 
 
-async def _ingest_video_subtitle(video: Video, lines: list[dict]) -> None:
+async def _ingest_video_subtitle(video: Video, lines: list[dict], db) -> None:
     """将视频字幕归档并增量导入 RAG 向量库。
 
     RAG ingest 失败不应阻塞字幕任务，仅记录日志。
     """
     try:
         md_path = save_subtitle_to_file(video, lines)
-        await ingest_file(
-            file_path=md_path,
-            uploader_id=video.uploader_id,
-            up_name=video.uploader.name,
-            replace_video=True,
+        await ingest_video(
+            video_id=video.id,
+            db=db,
+            replace=True,
         )
         log.info(
             "[rag ingest] video=%s, path=%s, ingested",
@@ -75,7 +75,7 @@ async def handle_subtitle_fetch(db, task: Task) -> None:
     try:
         sub = await collect_subtitle.fetch_video_subtitle(db, v)
         log.info("[task subtitle_fetch] task=%s, bvid=%s, fetched bilibili subtitle successfully", task.task_id, v.bvid)
-        await _ingest_video_subtitle(v, sub.lines)
+        await _ingest_video_subtitle(v, sub.lines, db)
         return
     except BizError as e:
         if e.code not in ("SUBTITLE_UNAVAILABLE", "SUBTITLE_DURATION_MISMATCH"):
@@ -119,7 +119,7 @@ async def _run_whisper_fallback(db, v: Video, task: Task | None = None) -> None:
 
     # 本地归档 + RAG 增量导入：data/{up主名称}/YYYYMMDD-{视频名称}.md
     try:
-        await _ingest_video_subtitle(v, lines)
+        await _ingest_video_subtitle(v, lines, db)
         log.info("[task whisper_fallback] task=%s, bvid=%s, saved subtitle to file and ingested", task_id, v.bvid)
     except Exception as e:
         # 文件归档/RAG 导入失败不影响 DB 写入，仅记录日志
@@ -277,4 +277,49 @@ async def handle_video_stats_refresh(db, task: Task) -> None:
     log.info(
         "video_stats_refresh done: total=%s updated=%s failed=%s",
         total, updated, failed,
+    )
+
+
+@task_handler("rag_ingest")
+async def handle_rag_ingest(db, task: Task) -> None:
+    """重新导入某位 UP 主下所有有字幕视频的 RAG 索引。"""
+    if task.ref_type != "uploader" or not task.ref_id:
+        raise BizError("TASK_INVALID_REF", "rag_ingest 必须绑定 uploader", http_status=500)
+
+    up = db.get(Uploader, task.ref_id)
+    if up is None or up.user_id != DEFAULT_USER_ID:
+        raise BizError("UPLOADER_NOT_FOUND", "UP主不存在", http_status=404)
+
+    def _update_progress(progress: int) -> None:
+        task.progress = progress
+        db.commit()
+        push_task_updated_sync({
+            "task_id": task.task_id,
+            "type": task.type,
+            "status": task.status,
+            "progress": task.progress,
+            "ref_type": task.ref_type,
+            "ref_id": task.ref_id,
+            "error": task.error,
+            "created_at": task.created_at,
+            "finished_at": task.finished_at,
+        })
+
+    log.info("[task rag_ingest] task=%s, uploader=%s, start", task.task_id, up.id)
+    result = await ingest_uploader(
+        uploader_id=up.id,
+        db=db,
+        up_name=up.name,
+        on_progress=_update_progress,
+    )
+    task.meta = {
+        **(task.meta or {}),
+        "files": result["files"],
+        "segments": result["segments"],
+        "chunks": result["chunks"],
+    }
+    db.commit()
+    log.info(
+        "[task rag_ingest] task=%s, uploader=%s, done: files=%s segments=%s chunks=%s",
+        task.task_id, up.id, result["files"], result["segments"], result["chunks"],
     )

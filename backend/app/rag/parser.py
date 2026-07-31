@@ -129,9 +129,15 @@ def parse_markdown_file(file_path: str | Path) -> ParsedReview:
 
 
 def segment_by_pause(
-    entries: List[SubtitleEntry], pause_threshold: float = 2.5
+    entries: List[SubtitleEntry],
+    pause_threshold: float = 2.5,
+    max_segment_duration_sec: float = 60.0,
 ) -> List[TextSegment]:
-    """按时间间隔将字幕切分为话题段。"""
+    """按时间间隔将字幕切分为话题段。
+
+    除了按停顿阈值切分外，还会限制单个话题段的最大时长，避免一次性把
+    几分钟的连续独白塞进 LLM，导致上下文超长或返回空内容。
+    """
     segments: List[TextSegment] = []
     current: List[SubtitleEntry] = []
 
@@ -140,7 +146,8 @@ def segment_by_pause(
             current.append(e)
         else:
             gap = e.start_seconds - current[-1].end_seconds
-            if gap > pause_threshold:
+            projected_duration = e.end_seconds - current[0].start_seconds
+            if gap > pause_threshold or projected_duration > max_segment_duration_sec:
                 segments.append(_make_segment(current))
                 current = [e]
             else:
@@ -166,3 +173,43 @@ def _make_segment(entries: List[SubtitleEntry]) -> TextSegment:
         text=text,
         time_position=f"{start} -> {end}",
     )
+
+
+def _seconds_to_time_str(seconds: float) -> str:
+    """把秒数转为 HH:MM:SS.mmm 或 MM:SS.mmm 格式。"""
+    secs = max(0.0, float(seconds))
+    hours = int(secs // 3600)
+    minutes = int((secs % 3600) // 60)
+    s = secs - hours * 3600 - minutes * 60
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{s:06.3f}"
+    return f"{minutes:02d}:{s:06.3f}"
+
+
+def segments_from_subtitle_lines(
+    lines: List[dict],
+    pause_threshold: float = 2.5,
+    max_segment_duration_sec: float = 60.0,
+) -> List[TextSegment]:
+    """从 DB 字幕行（start_sec/end_sec/text）生成话题段。
+
+    与 parse_markdown_file 不同，这里直接操作结构化字幕数据，不依赖文件名。
+    """
+    entries: List[SubtitleEntry] = []
+    for idx, line in enumerate(lines, 1):
+        text = _clean_text(line.get("text") or "")
+        if not text:
+            continue
+        start = float(line.get("start_sec", 0.0))
+        end = float(line.get("end_sec", start))
+        entries.append(
+            SubtitleEntry(
+                index=idx,
+                start_time=_seconds_to_time_str(start),
+                end_time=_seconds_to_time_str(end),
+                start_seconds=start,
+                end_seconds=end,
+                text=text,
+            )
+        )
+    return segment_by_pause(entries, pause_threshold, max_segment_duration_sec)

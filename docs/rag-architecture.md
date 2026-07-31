@@ -10,12 +10,15 @@ B站官方字幕 / B站 AI 字幕 / Whisper 转写
               │
               ▼
     backend/app/collect/fetch_subtitle.py
-              │ save_subtitle_to_file()
+              │ 写入 subtitles 表 + save_subtitle_to_file()
               ▼
-    data/{up_name}/YYYYMMDD-{video_title}.md   (Markdown 复盘文件)
+    ┌─────────────────────────────┐
+    │  SQLite: subtitles.lines    │  ← 日常增量 ingest 的数据源
+    │  data/{up_name}/...md       │  ← 本地归档/全量重建数据源
+    └─────────────────────────────┘
               │
               ▼
-    backend/app/rag/parser.py      解析 Markdown + 停顿切分
+    backend/app/rag/parser.py      解析字幕行 / Markdown + 停顿切分
               │
               ▼
     backend/app/rag/extractor.py   LLM 提取结构化观点卡片
@@ -24,29 +27,30 @@ B站官方字幕 / B站 AI 字幕 / Whisper 转写
     backend/app/rag/milvus_store.py  Embedding + Milvus 存储
               │
               ▼
-    Milvus Collection: taoge_review_chunks
+    Milvus Collection: taoge_review_chunks   (共享 collection，按 video_id/uploader_id 过滤)
               │
               ▼
-    backend/app/rag/service.py     search / chat
+    backend/app/rag/service.py     ingest / search / chat / video_search
               │
               ▼
     backend/app/api/rag.py         REST API
 ```
 
 说明：
-- 字幕获取主流程会把字幕归档成本地 Markdown 文件（`data/{up_name}/...`）。
-- RAG 的 `ingest` 默认读取该目录下的 `*.md` 文件，先清空该 UP 主已有向量，再重新写入。
-- 当前版本字幕归档后**不会自动触发 ingest**，需要手动调用 `POST /api/v1/rag/up/{uploader_id}/ingest`，或在任务链中主动触发。
+- 字幕获取主流程会把字幕写入 `subtitles` 表，同时归档成本地 Markdown 文件（`data/{up_name}/...`）。
+- 日常增量 ingest 直接读取 `subtitles.lines`，由 `subtitle_fetch` 任务成功后自动触发 `ingest_video()`。
+- 全量重建入口 `/up/{uploader_id}/ingest` 会遍历该 UP 主所有有字幕的视频，逐视频重新生成 chunk。
+- 向量库使用**共享 Collection**，通过 `video_id` / `uploader_id` 等 metadata 做过滤，既支持按 UP 主查，也支持跨 UP 主全局查。
 
 ## 2. 模块职责
 
 | 文件 | 职责 |
 |---|---|
-| `backend/app/rag/parser.py` | 解析 Markdown 复盘文件；从文件名提取 `date` 与 `title`；按停顿阈值（默认 2.5s）切分话题段。 |
+| `backend/app/rag/parser.py` | 解析 Markdown 复盘文件；从文件名提取 `date` 与 `title`；也支持从 `subtitles.lines` 直接切分话题段。 |
 | `backend/app/rag/extractor.py` | 对每个话题段调用 LLM，输出结构化的 `ArgumentChunk`（观点、事实、预测等）。 |
-| `backend/app/rag/milvus_store.py` | 封装 Milvus Lite / 服务器；负责 embedding 生成、collection 管理、写入、检索、清空、统计。 |
-| `backend/app/rag/service.py` | 业务编排：`ingest_directory`、`search_reviews`、`chat_reviews`、`get_stats`。 |
-| `backend/app/api/rag.py` | 暴露 REST 端点：`ingest`、`search`、`chat`、`stats`。 |
+| `backend/app/rag/milvus_store.py` | 封装 Milvus Lite / 服务器；负责 embedding 生成、collection 管理、写入、检索、清空、统计；新增关键词检索、RRF 混合检索与可选的交叉编码器重排序。 |
+| `backend/app/rag/service.py` | 业务编排：`ingest_video`（按视频增量）、`ingest_uploader`（按 UP 主全量重建）、`search_reviews`（按 UP 主）、`search_global_reviews`（全局）、`search_videos`（视频聚合）、`chat_reviews`（按 UP 主）、`chat_global_reviews`（全局/限定视频）。 |
+| `backend/app/api/rag.py` | 暴露 REST 端点：`/up/{id}/ingest`、`/up/{id}/search`、`/up/{id}/chat`、`/up/{id}/stats`、`/search`、`/videos/search`、`/chat`。 |
 
 ## 3. 观点卡片 Schema
 
@@ -64,6 +68,9 @@ B站官方字幕 / B站 AI 字幕 / Whisper 转写
 | `verifiability` | 可验证 / 待验证 / 不可验证 / 主观经验 |
 | `source_type` | UP主本人 / 引用他人 / 未知来源 |
 | `original_arguments` | 支撑该观点的原始论据列表 |
+| `video_id` | 视频数据库 ID，用于精确过滤/链接 |
+| `uploader_id` | UP 主数据库 ID |
+| `published_at` | 视频发布时间（ISO 8601），用于时间排序 |
 | `time_position` | 时间位置，如 `00:27-00:55` |
 
 ## 4. 配置
@@ -80,6 +87,13 @@ EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
 EMBEDDING_DIM=1024
 OLLAMA_BASE_URL=http://localhost:11434
 
+# 重排序（交叉编码器），默认关闭
+RERANK_ENABLED=false
+# RERANK_MODEL 支持 HuggingFace 模型名或本地路径；RERANK_MODEL_PATH 优先
+RERANK_MODEL=BAAI/bge-reranker-base
+RERANK_MODEL_PATH=
+RERANK_TOP_K=20
+
 # Milvus 向量库
 # 以 .db 结尾为 Milvus Lite 本地模式；否则按 host:port 连接服务器
 MILVUS_URI=./data/milvus/taoge.db
@@ -94,15 +108,17 @@ Base path: `/api/v1/rag`
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/up/{uploader_id}/ingest` | 扫描该 UP 主的复盘目录，全量导入 Milvus |
-| GET | `/up/{uploader_id}/search?q={query}&n={n}` | 语义检索观点卡片 |
-| POST | `/up/{uploader_id}/chat` | 基于检索结果的 RAG 对话 |
+| POST | `/up/{uploader_id}/ingest` | 重建该 UP 主下所有有字幕视频的 RAG 索引 |
+| GET | `/up/{uploader_id}/search?q={query}&n={n}&mode={vector\|keyword\|hybrid}` | 检索该 UP 主的观点卡片 |
+| POST | `/up/{uploader_id}/chat` | 与该 UP 主检索结果做 RAG 对话 |
 | GET | `/up/{uploader_id}/stats` | 该 UP 主已导入的卡片数量 |
+| GET | `/search?q={query}&n={n}&mode={vector\|keyword\|hybrid}` | 跨所有 UP 主检索观点卡片 |
+| GET | `/videos/search?q={query}&n={n}&mode={vector\|keyword\|hybrid}` | 按话题检索相关视频（返回视频级聚合） |
+| POST | `/chat` | 跨 UP 主/限定视频的 RAG 对话，请求体可传 `video_ids` |
 
 ## 6. 已知限制与后续方向
 
-1. **未与字幕任务自动联动**：新视频字幕后，需要手动触发 ingest。建议后续在 `subtitle_fetch` 任务成功后级联调用 `ingest_directory`。
-2. **独立脚本重复**：`docs/subtitle_to_rag.py` 与 `docs/vector_store.py` 是早期原型，逻辑已合并进 `backend/app/rag/`，建议弃用或迁移为调用后端模块的薄脚本。
-3. **客户端未复用**：每次 API 调用都会新建 `MilvusReviewStore` 与 `MilvusClient`，可优化为单例。
-4. **缺少 RAG 专项测试**：当前测试仅覆盖日志过滤器。
-5. **检索方式单一**：目前仅向量相似度检索，未来可补充关键词/混合检索、重排序。
+1. **已自动联动字幕任务**：`subtitle_fetch` 成功后自动调用 `ingest_video()` 增量入库；失败不影响字幕任务。
+2. **向量库 Schema 自动重建**：启动或首次请求时，`MilvusReviewStore` 会检查 collection 字段；若缺失 `video_id` / `uploader_id` / `published_at` 等新字段，会自动删除并重建 collection，随后需要重新触发 `/up/{id}/ingest` 恢复数据。
+3. **关键词检索精度**：当前基于 Milvus `like` 表达式做子串匹配，对长句查询不够精细；未来可接入全文索引（BM25）或分词器。
+4. **跨 UP 主隔离**：小范围阶段使用共享 collection + metadata 过滤；UP 主数量显著增加后可按 `uploader_id` 做 Milvus partition，接口层保持不变。

@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     llm_model: str = ""
     llm_timeout_sec: float = 300.0
     llm_max_tokens: int = 4096
+    # 是否发送 response_format={"type": "json_object"}；Ollama 等本地模型可设为 false
+    llm_json_mode: bool = True
 
     # ASR（本地 Qwen3-ASR）
     qwen_asr_model_path: str = ""
@@ -76,6 +78,15 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-large-zh-v1.5"
     embedding_dim: int = 1024
     ollama_base_url: str = "http://localhost:11434"
+
+    # 重排序（交叉编码器），默认关闭
+    rerank_enabled: bool = False
+    # rerank_model 支持 HuggingFace 模型名或本地绝对路径
+    rerank_model: str = "BAAI/bge-reranker-base"
+    # rerank_model_path 若填写，则优先于 rerank_model 作为本地路径使用
+    rerank_model_path: str = ""
+    # 重排序返回 top_k 数量
+    rerank_top_k: int = 20
 
     # Milvus 向量库
     # 如果设置 milvus_uri（如 ./data/milvus/taoge.db），则优先使用 Milvus Lite 本地模式；

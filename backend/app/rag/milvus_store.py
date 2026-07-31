@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -26,6 +27,12 @@ import httpx
 # 实际连接时 MilvusClient 使用的 URI 来自 get_settings().milvus_uri。
 _milvus_uri_env = os.environ.get("MILVUS_URI", "")
 os.environ["MILVUS_URI"] = "http://localhost:19530"
+
+# 调整 gRPC keepalive，避免 Milvus Lite / 服务器模式因 PING 帧过频返回
+# GOAWAY(ENHANCE_YOUR_CALM, too_many_pings)。setdefault 保留用户自定义值。
+os.environ.setdefault("GRPC_KEEPALIVE_TIME_MS", "300000")       # 5 分钟
+os.environ.setdefault("GRPC_KEEPALIVE_TIMEOUT_MS", "20000")     # 20 秒
+os.environ.setdefault("GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS", "0")
 
 try:
     from pymilvus import DataType, MilvusClient
@@ -41,6 +48,9 @@ log = logging.getLogger(__name__)
 
 # 默认维度与 BAAI/bge-large-zh-v1.5 一致；使用 Ollama 等其它模型时请同步修改 EMBEDDING_DIM
 _DEFAULT_DIM = 1024
+
+# 关键词检索覆盖的 VARCHAR 字段
+_KEYWORD_FIELDS = ["content", "core_topic", "sub_topics", "original_arguments"]
 
 
 class _MilvusLiteGrpcFilter(logging.Filter):
@@ -104,6 +114,26 @@ class _OllamaEmbedder:
         return embeddings
 
 
+class _CrossEncoderReranker:
+    """基于 sentence-transformers CrossEncoder 的轻量重排序封装。"""
+
+    def __init__(self, model_name: str, model_path: Optional[str] = None):
+        from sentence_transformers import CrossEncoder
+
+        self.model_source = model_path if model_path else model_name
+        self.model = CrossEncoder(self.model_source)
+        log.info("Loaded cross-encoder reranker: %s", self.model_source)
+
+    def rerank(self, query: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not chunks:
+            return []
+        pairs = [(query, c["content"]) for c in chunks]
+        scores = self.model.predict(pairs)
+        scored = [(score, chunk) for score, chunk in zip(scores, chunks)]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [chunk for _, chunk in scored]
+
+
 # 按配置维度缓存 MilvusReviewStore 实例，避免每次请求都重建 MilvusClient 与 embedding 模型。
 _store_cache: Dict[tuple, "MilvusReviewStore"] = {}
 
@@ -127,6 +157,13 @@ class MilvusReviewStore:
         self.embedding_model = settings.embedding_model
         self.embedding_dim = settings.embedding_dim
         self.ollama_base_url = settings.ollama_base_url
+
+        self.rerank_enabled = settings.rerank_enabled
+        self.rerank_model = settings.rerank_model
+        self.rerank_model_path = settings.rerank_model_path
+        self.rerank_top_k = settings.rerank_top_k
+
+        self._reranker: Optional[_CrossEncoderReranker] = None
 
         if self.uri and self.uri.strip():
             use_uri = self.uri.strip()
@@ -177,17 +214,38 @@ class MilvusReviewStore:
         embedder = self._get_embedder()
         return embedder.encode(texts)
 
+    # 当前代码期望 collection 包含的字段集合
+    _EXPECTED_FIELDS = {
+        "id", "content", "video_id", "uploader_id", "video_title", "up_name",
+        "date", "published_at", "time_position", "content_type", "argument_role",
+        "core_topic", "stance_type", "confidence", "verifiability", "source_type",
+        "sub_topics", "original_arguments", "embedding",
+    }
+
     def _ensure_collection(self) -> None:
-        """确保 collection 存在，不存在则创建。"""
+        """确保 collection 存在且 schema 与当前代码一致；不一致则删除重建。"""
         if self.client.has_collection(self.collection_name):
-            return
+            desc = self.client.describe_collection(self.collection_name)
+            existing = {f.get("name") for f in desc.get("fields", [])}
+            missing = self._EXPECTED_FIELDS - existing
+            if not missing:
+                return
+            log.warning(
+                "Collection %s schema missing fields %s, dropping and recreating",
+                self.collection_name,
+                sorted(missing),
+            )
+            self.client.drop_collection(self.collection_name)
 
         schema = MilvusClient.create_schema(auto_id=False, enable_dynamic_field=False)
         schema.add_field(field_name="id", datatype=DataType.VARCHAR, max_length=64, is_primary=True)
         schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=8192)
+        schema.add_field(field_name="video_id", datatype=DataType.VARCHAR, max_length=32)
+        schema.add_field(field_name="uploader_id", datatype=DataType.VARCHAR, max_length=32)
         schema.add_field(field_name="video_title", datatype=DataType.VARCHAR, max_length=512)
         schema.add_field(field_name="up_name", datatype=DataType.VARCHAR, max_length=128)
         schema.add_field(field_name="date", datatype=DataType.VARCHAR, max_length=16)
+        schema.add_field(field_name="published_at", datatype=DataType.VARCHAR, max_length=64)
         schema.add_field(field_name="time_position", datatype=DataType.VARCHAR, max_length=64)
         schema.add_field(field_name="content_type", datatype=DataType.VARCHAR, max_length=32)
         schema.add_field(field_name="argument_role", datatype=DataType.VARCHAR, max_length=32)
@@ -228,9 +286,12 @@ class MilvusReviewStore:
             data.append({
                 "id": c["chunk_id"],
                 "content": c["content"],
+                "video_id": meta.get("video_id", ""),
+                "uploader_id": meta.get("uploader_id", ""),
                 "video_title": meta.get("video_title", ""),
                 "up_name": meta.get("up_name", ""),
                 "date": meta.get("date", ""),
+                "published_at": meta.get("published_at", ""),
                 "time_position": meta.get("time_position", ""),
                 "content_type": meta.get("content_type", ""),
                 "argument_role": meta.get("argument_role", ""),
@@ -285,9 +346,10 @@ class MilvusReviewStore:
             limit=n_results,
             filter=filter_expr,
             output_fields=[
-                "content", "video_title", "up_name", "date", "time_position",
-                "content_type", "argument_role", "core_topic", "stance_type",
-                "confidence", "verifiability", "source_type", "sub_topics", "original_arguments"
+                "content", "video_id", "uploader_id", "video_title", "up_name", "date",
+                "published_at", "time_position", "content_type", "argument_role",
+                "core_topic", "stance_type", "confidence", "verifiability", "source_type",
+                "sub_topics", "original_arguments"
             ],
         )
 
@@ -300,9 +362,12 @@ class MilvusReviewStore:
                     "content": entity.get("content"),
                     "distance": float(hit.get("distance", 0)),
                     "metadata": {
+                        "video_id": entity.get("video_id"),
+                        "uploader_id": entity.get("uploader_id"),
                         "video_title": entity.get("video_title"),
                         "up_name": entity.get("up_name"),
                         "date": entity.get("date"),
+                        "published_at": entity.get("published_at"),
                         "time_position": entity.get("time_position"),
                         "content_type": entity.get("content_type"),
                         "argument_role": entity.get("argument_role"),
@@ -316,6 +381,156 @@ class MilvusReviewStore:
                     },
                 })
         return output
+
+    @staticmethod
+    def _tokenize_query(query: str) -> List[str]:
+        """把查询拆分为可用于关键词匹配的词项。"""
+        # 去掉通配符字符，避免干扰 Milvus like 表达式
+        cleaned = re.sub(r"[%_]+", " ", query)
+        terms = [t.strip() for t in cleaned.split() if t.strip()]
+        # 过滤过短词项，保留长度 >= 2 或数字
+        return [t for t in terms if len(t) >= 2 or t.isdigit()]
+
+    @staticmethod
+    def _build_keyword_filter(query: str) -> Optional[str]:
+        """为 Milvus query 构建 like 过滤表达式。
+
+        每个词项需在任一关键词字段中出现；多个词项之间为 AND 关系。
+        """
+        terms = MilvusReviewStore._tokenize_query(query)
+        if not terms:
+            return None
+
+        term_clauses = []
+        for term in terms:
+            # 双引号转义：Milvus 字符串字面量使用双引号包裹
+            escaped_term = term.replace('"', '\\"')
+            field_clauses = [f'{field} like "%{escaped_term}%"' for field in _KEYWORD_FIELDS]
+            term_clauses.append(f"({' or '.join(field_clauses)})")
+        return " and ".join(term_clauses)
+
+    def keyword_search(
+        self,
+        query: str,
+        n_results: int = 5,
+        filter_expr: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """基于 Milvus like 表达式的关键词检索。"""
+        keyword_filter = self._build_keyword_filter(query)
+        if keyword_filter is None:
+            return []
+
+        combined_filter = keyword_filter
+        if filter_expr:
+            combined_filter = f"({filter_expr}) and ({keyword_filter})"
+
+        self._load()
+        try:
+            results = self.client.query(
+                collection_name=self.collection_name,
+                filter=combined_filter,
+                output_fields=[
+                    "id", "content", "video_id", "uploader_id", "video_title", "up_name",
+                    "date", "published_at", "time_position", "content_type", "argument_role",
+                    "core_topic", "stance_type", "confidence", "verifiability", "source_type",
+                    "sub_topics", "original_arguments"
+                ],
+                limit=n_results,
+            )
+        except Exception as e:
+            log.warning("Keyword search failed (%s): %s", combined_filter, e)
+            return []
+
+        output: List[Dict[str, Any]] = []
+        for entity in results:
+            output.append({
+                "chunk_id": entity.get("id"),
+                "content": entity.get("content"),
+                "distance": 0.0,
+                "metadata": {
+                    "video_id": entity.get("video_id"),
+                    "uploader_id": entity.get("uploader_id"),
+                    "video_title": entity.get("video_title"),
+                    "up_name": entity.get("up_name"),
+                    "date": entity.get("date"),
+                    "published_at": entity.get("published_at"),
+                    "time_position": entity.get("time_position"),
+                    "content_type": entity.get("content_type"),
+                    "argument_role": entity.get("argument_role"),
+                    "core_topic": entity.get("core_topic"),
+                    "stance_type": entity.get("stance_type"),
+                    "confidence": entity.get("confidence"),
+                    "verifiability": entity.get("verifiability"),
+                    "source_type": entity.get("source_type"),
+                    "sub_topics": [t.strip() for t in (entity.get("sub_topics") or "").split(",") if t.strip()],
+                    "original_arguments": json.loads(entity.get("original_arguments") or "[]"),
+                },
+            })
+        return output
+
+    @staticmethod
+    def _rrf_fuse(ranked_lists: List[List[Dict[str, Any]]], k: int = 60) -> List[Dict[str, Any]]:
+        """使用 Reciprocal Rank Fusion 合并多个排序列表。"""
+        scores: Dict[str, float] = {}
+        item_map: Dict[str, Dict[str, Any]] = {}
+
+        for lst in ranked_lists:
+            for rank, item in enumerate(lst, start=1):
+                item_id = item["chunk_id"]
+                scores[item_id] = scores.get(item_id, 0.0) + 1.0 / (k + rank)
+                if item_id not in item_map:
+                    item_map[item_id] = item
+
+        fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        return [item_map[item_id] for item_id, _ in fused]
+
+    def hybrid_search(
+        self,
+        query: str,
+        n_results: int = 5,
+        filter_expr: Optional[str] = None,
+        rrf_k: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """混合检索：向量检索 + 关键词检索，使用 RRF 融合。
+
+        如果启用 rerank_enabled，会对 RRF 后的 Top-K 候选做交叉编码器重排。
+        """
+        vector_results = self.search(query, n_results=n_results * 3, filter_expr=filter_expr)
+        keyword_results = self.keyword_search(query, n_results=n_results * 3, filter_expr=filter_expr)
+
+        fused = self._rrf_fuse([vector_results, keyword_results], k=rrf_k)
+        candidates = fused[:n_results]
+
+        if self.rerank_enabled and candidates:
+            reranked = self.rerank(query, candidates, top_k=n_results)
+            return reranked
+        return candidates
+
+    def _get_reranker(self) -> _CrossEncoderReranker:
+        if self._reranker is None:
+            self._reranker = _CrossEncoderReranker(
+                self.rerank_model,
+                model_path=self.rerank_model_path or None,
+            )
+        return self._reranker
+
+    def rerank(
+        self,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        top_k: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """使用交叉编码器对候选 chunk 重排序。"""
+        if not chunks:
+            return []
+        top_k = top_k or self.rerank_top_k
+        try:
+            reranker = self._get_reranker()
+            reranked = reranker.rerank(query, chunks[:top_k])
+            return reranked
+        except Exception as e:
+            log.warning("Rerank failed: %s", e)
+            return chunks[:top_k]
 
     def clear(self, filter_expr: Optional[str] = None) -> None:
         """清空 collection。

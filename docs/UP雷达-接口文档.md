@@ -747,6 +747,134 @@ PATCH /system/config
 
 ---
 
+---
+
+### 3.8 RAG 复盘问答
+
+Base path: `/rag`
+
+#### 3.8.1 重建某位 UP 主的 RAG 索引
+
+```
+POST /rag/up/{uploader_id}/ingest
+```
+
+遍历该 UP 主下所有有字幕的视频，重新生成观点卡片并写入向量库。
+
+**响应** `200`
+
+```json
+{ "files": 12, "segments": 156, "chunks": 420 }
+```
+
+#### 3.8.2 检索指定 UP 主的观点卡片
+
+```
+GET /rag/up/{uploader_id}/search?q=华为&n=5&mode=hybrid
+```
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| q | string | 查询文本 |
+| n | int | 返回数量，默认 5，最大 20 |
+| mode | string | `vector` / `keyword` / `hybrid` |
+
+**响应** `200`
+
+```json
+{
+  "items": [
+    {
+      "chunk_id": "...",
+      "content": "...",
+      "distance": 0.12,
+      "metadata": {
+        "video_id": "v1",
+        "video_title": "...",
+        "up_name": "...",
+        "date": "2026-07-19",
+        "time_position": "00:12 -> 00:45",
+        "content_type": "观点",
+        "core_topic": "华为"
+      }
+    }
+  ]
+}
+```
+
+#### 3.8.3 与指定 UP 主做 RAG 对话
+
+```
+POST /rag/up/{uploader_id}/chat
+
+{
+  "question": "他怎么看华为？",
+  "n_results": 5,
+  "mode": "hybrid"
+}
+```
+
+**响应** `200`
+
+```json
+{
+  "answer": "...",
+  "chunks": [...],
+  "token_usage": { "prompt": 1200, "completion": 180 }
+}
+```
+
+#### 3.8.4 跨 UP 主检索观点卡片
+
+```
+GET /rag/search?q=华为&n=5&mode=hybrid
+```
+
+与 3.8.2 类似，但不限定 UP 主。
+
+#### 3.8.5 按话题检索视频
+
+```
+GET /rag/videos/search?q=华为&n=10&mode=hybrid
+```
+
+返回相关视频列表（按命中 chunk 数排序）。
+
+**响应** `200`
+
+```json
+{
+  "videos": [
+    {
+      "video_id": "v1",
+      "video_title": "...",
+      "up_name": "...",
+      "uploader_id": "u1",
+      "date": "2026-07-19",
+      "published_at": "2026-07-19T10:32:00+08:00",
+      "chunk_count": 5,
+      "top_chunk": "...",
+      "best_distance": 0.08
+    }
+  ]
+}
+```
+
+#### 3.8.6 跨 UP 主/限定视频的 RAG 对话
+
+```
+POST /rag/chat
+
+{
+  "question": "这些视频里对华为的观点有什么异同？",
+  "n_results": 5,
+  "mode": "hybrid",
+  "video_ids": ["v1", "v2"]
+}
+```
+
+`video_ids` 为空时做全局检索；传入视频 ID 时只在这些视频内检索作答。
+
 ## 4. 页面 ↔ 接口映射
 
 | 页面区域 | 交互 | 调用接口 |
@@ -770,6 +898,9 @@ PATCH /system/config
 | 洞察页 | 本周热词 | `GET /insights/hot-words?days=7` |
 | 洞察页 | 观点聚类卡片 | `GET /insights/topic-clusters?days=7` |
 | 洞察页 | 播放 Top5 | `GET /insights/top-videos?days=7` |
+| RAG 页 | 话题搜索视频 | `GET /rag/videos/search?q=...` |
+| RAG 页 | 按 UP 主问答 | `POST /rag/up/{uploader_id}/chat` |
+| RAG 页 | 跨 UP 主/限定视频问答 | `POST /rag/chat` |
 | 顶栏设置 | B 站 SESSDATA / 监控设置 | `GET /system/config`、`PATCH /system/config` |
 | 设置页（待做） | 模板管理 / 监控设置 | `GET/POST/PUT/DELETE /summary/templates`、`PATCH /system/config` |
 | 添加UP主（待做） | 搜索+添加 | `GET /uploaders/search` → `POST /uploaders` |

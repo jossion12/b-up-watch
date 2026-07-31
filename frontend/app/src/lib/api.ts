@@ -433,9 +433,8 @@ export interface RagSearchItem {
 export interface RagChatChunk extends RagSearchItem {}
 
 export interface RagIngestOut {
-  files: number
-  segments: number
-  chunks: number
+  task_id: string
+  type: string
 }
 
 export interface RagSearchOut {
