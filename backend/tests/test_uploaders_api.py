@@ -299,19 +299,28 @@ def test_prioritize_latest_404(client):
     assert r.json()["error"]["code"] == "UPLOADER_NOT_FOUND"
 
 
-# ---------- 回溯最近一年视频 ----------
+# ---------- 回溯当年视频 ----------
+
+
+def _current_year_days_back() -> int:
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    year_start = now.date().replace(month=1, day=1)
+    return (now.date() - year_start).days
 
 
 def test_backfill_year_creates_feed_refresh(client, db_session_factory):
     from app.models import Task
 
     up, _ = _make_uploader_and_videos(db_session_factory, video_count=0)
+    expected_days = _current_year_days_back()
 
     r = client.post(f"/api/v1/uploaders/{up.id}/backfill-year")
     assert r.status_code == 202, r.text
     body = r.json()
     assert body["type"] == "feed_refresh"
-    assert body["days_back"] == 365
+    assert body["days_back"] == expected_days
 
     with db_session_factory() as db:
         task = db.get(Task, body["task_id"])
@@ -319,7 +328,7 @@ def test_backfill_year_creates_feed_refresh(client, db_session_factory):
         assert task.type == "feed_refresh"
         assert task.ref_type == "uploader"
         assert task.ref_id == up.id
-        assert task.meta.get("days_back") == 365
+        assert task.meta.get("days_back") == expected_days
         assert task.meta.get("mode") == "backfill-year"
 
 
@@ -328,6 +337,7 @@ def test_backfill_year_returns_existing_task(client, db_session_factory):
     from app.models import Task
 
     up, _ = _make_uploader_and_videos(db_session_factory, video_count=0)
+    expected_days = _current_year_days_back()
 
     with db_session_factory() as db:
         existing = Task(
@@ -346,7 +356,7 @@ def test_backfill_year_returns_existing_task(client, db_session_factory):
     assert r.status_code == 202, r.text
     body = r.json()
     assert body["task_id"] == existing.task_id
-    assert body["days_back"] == 365
+    assert body["days_back"] == expected_days
 
     with db_session_factory() as db:
         assert db.query(Task).filter(Task.ref_id == up.id, Task.type == "feed_refresh").count() == 1

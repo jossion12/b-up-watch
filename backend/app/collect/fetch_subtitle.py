@@ -94,7 +94,7 @@ def _subtitle_file_path(video: Video) -> Path:
     return _SUBTITLE_DATA_DIR / uploader_name / file_name
 
 
-def _save_subtitle_to_file(video: Video, lines: list[dict]) -> Path:
+def save_subtitle_to_file(video: Video, lines: list[dict]) -> Path:
     """将字幕内容写入本地 Markdown 文件，返回最终路径。"""
     path = _subtitle_file_path(video)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,27 +113,36 @@ async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
     同时利用同一次 `x/web-interface/view` 请求回填真实点赞数（空间列表接口
     返回的 like 经常为 null）。
     """
+    log.info("[bili subtitle] bvid=%s, fetching video info", video.bvid)
     info = await bili_sub.get_video_info(video.bvid)
     cid = info.get("cid")
     if not cid:
+        log.warning("[bili subtitle] bvid=%s, cid missing in video info", video.bvid)
         raise BizError("VIDEO_NOT_FOUND", "视频不存在或 cid 缺失", http_status=404)
+    log.info("[bili subtitle] bvid=%s, cid=%s", video.bvid, cid)
 
     # 回填真实点赞数
     stat = info.get("stat") or {}
     real_likes = stat.get("like")
     if real_likes is not None:
         video.likes = int(real_likes)
+        log.info("[bili subtitle] bvid=%s, backfilled likes=%s", video.bvid, real_likes)
 
+    log.info("[bili subtitle] bvid=%s, fetching subtitle tracks", video.bvid)
     tracks = await bili_sub.get_player_subtitles(video.bvid, int(cid))
+    log.info("[bili subtitle] bvid=%s, got %d subtitle tracks", video.bvid, len(tracks))
     track = bili_sub.pick_preferred_subtitle(tracks)
     if track is None:
+        log.warning("[bili subtitle] bvid=%s, no preferred subtitle track available", video.bvid)
         raise BizError(
             "SUBTITLE_UNAVAILABLE",
             "该视频无字幕（可尝试 Whisper 转写兜底）",
             http_status=422,
         )
+    log.info("[bili subtitle] bvid=%s, picked track: ai_type=%s, lan=%s, url=%s", video.bvid, track.get("ai_type"), track.get("lan"), track.get("subtitle_url"))
 
     lines = await bili_sub.download_subtitle_json(track["subtitle_url"])
+    log.info("[bili subtitle] bvid=%s, downloaded %d subtitle lines", video.bvid, len(lines))
     _check_subtitle_duration(lines, video.duration_sec)
 
     ai_type = int(track.get("ai_type", 0))
@@ -165,13 +174,13 @@ async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
 
     # 本地归档：data/{up主名称}/YYYYMMDD-{视频名称}.md
     try:
-        _save_subtitle_to_file(video, lines)
+        save_subtitle_to_file(video, lines)
     except Exception as e:
         # 文件归档失败不影响 DB 写入，仅记录日志
-        log.warning("failed to save subtitle file for video %s: %s", video.bvid, e)
+        log.warning("[bili subtitle] bvid=%s, failed to save subtitle file: %s", video.bvid, e)
 
     log.info(
-        "fetched subtitle for video %s: %d lines, source=%s, lang=%s",
+        "[bili subtitle] bvid=%s, success: %d lines, source=%s, lang=%s",
         video.bvid, len(lines), source, language,
     )
     return sub

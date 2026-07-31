@@ -290,9 +290,14 @@ def prioritize_uploader_latest(
     )
 
 
-# ---------- 回溯该 UP 主最近一年视频 ----------
+# ---------- 回溯该 UP 主当年视频 ----------
 
-BACKFILL_YEAR_DAYS = 365
+
+def _current_year_days_back() -> int:
+    """计算从今天到当年 1 月 1 日的天数差，用于回溯当年视频。"""
+    now = datetime.now(timezone.utc)
+    year_start = now.date().replace(month=1, day=1)
+    return (now.date() - year_start).days
 
 
 @router.post(
@@ -305,10 +310,12 @@ def backfill_uploader_year(
     request: Request,
     db: Session = Depends(get_db),
 ) -> UploaderBackfillYearOut:
-    """为某 UP 主创建 feed_refresh 任务，拉取最近一年的视频。"""
+    """为某 UP 主创建 feed_refresh 任务，拉取当年（1月1日至今）的视频。"""
     up = db.get(Uploader, uploader_id)
     if up is None or up.user_id != DEFAULT_USER_ID:
         raise BizError("UPLOADER_NOT_FOUND", "UP主不存在", http_status=404)
+
+    days_back = _current_year_days_back()
 
     existing = db.execute(
         select(Task.task_id).where(
@@ -322,7 +329,7 @@ def backfill_uploader_year(
         return UploaderBackfillYearOut(
             task_id=existing,
             type="feed_refresh",
-            days_back=BACKFILL_YEAR_DAYS,
+            days_back=days_back,
         )
 
     task = create_task(
@@ -331,7 +338,7 @@ def backfill_uploader_year(
         "uploader",
         up.id,
         meta={
-            "days_back": BACKFILL_YEAR_DAYS,
+            "days_back": days_back,
             "mode": "backfill-year",
         },
     )
@@ -345,12 +352,12 @@ def backfill_uploader_year(
     log.info(
         "backfill_year uploader=%s days_back=%d task_id=%s",
         up.bilibili_uid,
-        BACKFILL_YEAR_DAYS,
+        days_back,
         task.task_id,
     )
 
     return UploaderBackfillYearOut(
         task_id=task.task_id,
         type=task.type,
-        days_back=BACKFILL_YEAR_DAYS,
+        days_back=days_back,
     )

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Routes, Route, useNavigate } from 'react-router'
-import { Tv, Activity, AlertCircle, RefreshCw, Bell, Settings, Loader2 } from 'lucide-react'
+import { Tv, Activity, AlertCircle, RefreshCw, Bell, Loader2, Database } from 'lucide-react'
 import AddUploaderDialog from '@/sections/AddUploaderDialog'
+import SettingsDialog from '@/sections/SettingsDialog'
 // import { cn } from '@/lib/utils'
 import SwimlaneTimeline from '@/sections/SwimlaneTimeline'
 import Timeline from '@/sections/Timeline'
@@ -10,6 +11,7 @@ import Timeline from '@/sections/Timeline'
 import Jobs from '@/sections/Jobs'
 import FailedTasks from '@/sections/FailedTasks'
 import VideoPage from '@/sections/VideoPage'
+import ReviewPage from '@/sections/ReviewPage'
 import UpFilter from '@/sections/UpFilter'
 import CategoryFilter from '@/sections/CategoryFilter'
 import { uploadersApi, videosApi, systemApi } from '@/lib/api'
@@ -241,6 +243,15 @@ export default function App() {
               >
                 <AlertCircle className="h-3.5 w-3.5" /> 失败任务
               </button>
+              <button
+                onClick={() => {
+                  const target = uploaders[0]?.id
+                  navigate(target ? `/review/${target}` : '/')
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Database className="h-3.5 w-3.5" /> UP复盘
+              </button>
 
               <div className="flex-1" />
 
@@ -296,9 +307,7 @@ export default function App() {
                     <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-primary" />
                   )}
                 </button>
-                <button className="h-8 w-8 rounded-lg flex items-center justify-center hover:bg-accent hover:text-foreground transition-colors" title="设置">
-                  <Settings className="h-4 w-4" />
-                </button>
+                <SettingsDialog />
               </div>
             </header>
 
@@ -346,6 +355,10 @@ export default function App() {
       />
       <Route path="/jobs" element={<Jobs />} />
       <Route path="/failed-tasks" element={<FailedTasks />} />
+      <Route
+        path="/review/:uploaderId"
+        element={<ReviewPage uploaders={uploaders} />}
+      />
     </Routes>
   )
 }

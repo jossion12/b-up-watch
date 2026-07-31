@@ -4,6 +4,22 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 运行时从数据库加载的 B站 SESSDATA 缓存；优先于 .env 中的值。
+_live_bilibili_sessdata: str | None = None
+
+
+def set_bilibili_sessdata(value: str | None) -> None:
+    """更新内存中的 SESSDATA 缓存。"""
+    global _live_bilibili_sessdata
+    _live_bilibili_sessdata = value
+
+
+def get_bilibili_sessdata() -> str:
+    """获取当前生效的 SESSDATA：优先运行时缓存，其次 .env。"""
+    if _live_bilibili_sessdata is not None:
+        return _live_bilibili_sessdata
+    return get_settings().bilibili_sessdata
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -52,6 +68,22 @@ class Settings(BaseSettings):
     # 相对偏差（如 0.15=15%）与绝对偏差（秒）同时满足才触发 fallback
     subtitle_duration_mismatch_ratio: float = 0.15
     subtitle_duration_mismatch_abs_sec: float = 10.0
+
+    # UP 复盘 RAG
+    review_base_dir: str = "./data"
+    # embedding 后端：sentence_transformers 或 ollama
+    embedding_provider: str = "sentence_transformers"
+    embedding_model: str = "BAAI/bge-large-zh-v1.5"
+    embedding_dim: int = 1024
+    ollama_base_url: str = "http://localhost:11434"
+
+    # Milvus 向量库
+    # 如果设置 milvus_uri（如 ./data/milvus/taoge.db），则优先使用 Milvus Lite 本地模式；
+    # 否则连接 milvus_host:milvus_port 的服务器模式。
+    milvus_uri: str = "./data/milvus/taoge.db"
+    milvus_host: str = "localhost"
+    milvus_port: int = 19530
+    milvus_collection: str = "taoge_review_chunks"
 
 
 @lru_cache

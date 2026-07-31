@@ -359,6 +359,7 @@ export interface SystemConfig {
   summary_model: string
   summary_template_id: string
   auto_summarize: boolean
+  bilibili_sessdata?: string | null
 }
 
 export const systemApi = {
@@ -402,4 +403,67 @@ export const jobsApi = {
       method: 'PATCH',
       body: JSON.stringify({ enabled }),
     }),
+}
+
+// ---------- UP 复盘 RAG ----------
+
+export interface RagChunkMetadata {
+  video_title: string
+  up_name: string
+  date?: string
+  time_position?: string
+  content_type?: string
+  argument_role?: string
+  core_topic?: string
+  stance_type?: string
+  confidence?: string
+  verifiability?: string
+  source_type?: string
+  sub_topics?: string[]
+  original_arguments?: string[]
+}
+
+export interface RagSearchItem {
+  chunk_id: string
+  content: string
+  distance: number
+  metadata: RagChunkMetadata
+}
+
+export interface RagChatChunk extends RagSearchItem {}
+
+export interface RagIngestOut {
+  files: number
+  segments: number
+  chunks: number
+}
+
+export interface RagSearchOut {
+  items: RagSearchItem[]
+}
+
+export interface RagChatOut {
+  answer: string
+  chunks: RagChatChunk[]
+  token_usage?: Record<string, any>
+}
+
+export interface RagStatsOut {
+  total_chunks: number
+}
+
+export const ragApi = {
+  ingest: (uploaderId: string) =>
+    request<RagIngestOut>(`/rag/up/${uploaderId}/ingest`, { method: 'POST' }),
+  search: (uploaderId: string, q: string, n = 5) =>
+    request<RagSearchOut>(
+      `/rag/up/${uploaderId}/search?q=${encodeURIComponent(q)}&n=${n}`
+    ),
+  chat: (uploaderId: string, question: string, n_results = 5) =>
+    request<RagChatOut>(`/rag/up/${uploaderId}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ question, n_results }),
+    }),
+  stats: (uploaderId: string) =>
+    request<RagStatsOut>(`/rag/up/${uploaderId}/stats`),
 }

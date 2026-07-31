@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import get_settings, set_bilibili_sessdata
 from app.db import get_db
 from app.errors import BizError
 from app.models import Subtitle, SummaryTemplate, SystemConfig, Task, Uploader, Video
@@ -55,13 +55,27 @@ def system_status(db: Session = Depends(get_db)) -> SystemStatusOut:
         queued_tasks=int(pending),
         llm=SystemStatusLLM(
             provider="openai-compatible",
-            model=cfg.summary_model if cfg else "",
+            model=settings.llm_model or (cfg.summary_model if cfg else ""),
             available=bool(settings.llm_api_key),
         ),
         storage=SystemStatusStorage(db_mb=db_mb, subtitles_count=int(sub_count)),
     )
 
-# ---------- 3.7.2 更新监控设置 ----------
+# ---------- 3.7.2 系统配置 ----------
+
+@router.get("/system/config", response_model=SystemConfigOut)
+def get_system_config(db: Session = Depends(get_db)) -> SystemConfigOut:
+    cfg = db.get(SystemConfig, 1)
+    if cfg is None:
+        raise BizError("SYSTEM_CONFIG_NOT_FOUND", "系统配置不存在", http_status=500)
+    return SystemConfigOut(
+        refresh_interval_sec=cfg.refresh_interval_sec,
+        summary_model=cfg.summary_model,
+        summary_template_id=cfg.summary_template_id,
+        auto_summarize=cfg.auto_summarize,
+        bilibili_sessdata=cfg.bilibili_sessdata,
+    )
+
 
 @router.patch("/system/config", response_model=SystemConfigOut)
 def update_system_config(
@@ -84,6 +98,9 @@ def update_system_config(
         cfg.summary_model = payload.summary_model
     if payload.auto_summarize is not None:
         cfg.auto_summarize = payload.auto_summarize
+    if payload.bilibili_sessdata is not None:
+        cfg.bilibili_sessdata = payload.bilibili_sessdata or None
+        set_bilibili_sessdata(cfg.bilibili_sessdata)
 
     cfg.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -93,6 +110,7 @@ def update_system_config(
         summary_model=cfg.summary_model,
         summary_template_id=cfg.summary_template_id,
         auto_summarize=cfg.auto_summarize,
+        bilibili_sessdata=cfg.bilibili_sessdata,
     )
 
 

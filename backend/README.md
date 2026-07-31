@@ -30,7 +30,7 @@ python -m venv .venv
 # source .venv/bin/activate
 
 pip install -e ".[dev]"
-cp .env.example .env  # 填入 BILIBILI_SESSDATA 可选
+cp .env.example .env  # 填入 BILIBILI_SESSDATA 可选；启动后也可在 Web 页面「设置」中配置
 
 uvicorn app.main:app --reload
 ```

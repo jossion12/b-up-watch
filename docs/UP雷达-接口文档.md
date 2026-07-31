@@ -700,12 +700,30 @@ GET /system/status
   "refresh_interval_sec": 600,
   "running_tasks": 2,
   "queued_tasks": 1,
-  "llm": { "provider": "openai-compatible", "model": "qwen3-235b", "available": true },
+  "llm": { "provider": "openai-compatible", "model": "qwen3.5:9b", "available": true },
   "storage": { "db_mb": 48.2, "subtitles_count": 156 }
 }
 ```
 
-#### 3.7.2 更新监控设置
+| 字段 | 说明 |
+|---|---|
+| llm.model | 实际使用的 LLM 模型，取自 `.env` 的 `LLM_MODEL` |
+| llm.available | 是否配置了 `LLM_API_KEY` |
+| refresh_interval_sec | 当前数据库中的采集间隔（与 `.env` 独立） |
+
+#### 3.7.2 查询/更新监控设置
+
+```
+GET /system/config
+
+{
+  "refresh_interval_sec": 600,
+  "summary_model": "qwen3-235b",
+  "summary_template_id": "tpl_default",
+  "auto_summarize": false,
+  "bilibili_sessdata": "xxx"
+}
+```
 
 ```
 PATCH /system/config
@@ -714,7 +732,8 @@ PATCH /system/config
   "refresh_interval_sec": 300,
   "summary_model": "qwen3-235b",
   "summary_template_id": "tpl_default",
-  "auto_summarize": true
+  "auto_summarize": true,
+  "bilibili_sessdata": "xxx"
 }
 ```
 
@@ -724,6 +743,7 @@ PATCH /system/config
 | summary_model | 默认使用的 LLM 模型 |
 | summary_template_id | 默认总结模板 |
 | auto_summarize | 新视频采集后自动排队生成总结（「过夜批量处理」开关） |
+| bilibili_sessdata | B 站登录 Cookie，保存后即时生效；传空字符串可清空 |
 
 ---
 
@@ -750,6 +770,7 @@ PATCH /system/config
 | 洞察页 | 本周热词 | `GET /insights/hot-words?days=7` |
 | 洞察页 | 观点聚类卡片 | `GET /insights/topic-clusters?days=7` |
 | 洞察页 | 播放 Top5 | `GET /insights/top-videos?days=7` |
+| 顶栏设置 | B 站 SESSDATA / 监控设置 | `GET /system/config`、`PATCH /system/config` |
 | 设置页（待做） | 模板管理 / 监控设置 | `GET/POST/PUT/DELETE /summary/templates`、`PATCH /system/config` |
 | 添加UP主（待做） | 搜索+添加 | `GET /uploaders/search` → `POST /uploaders` |
 

@@ -216,7 +216,7 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
                       setBackfillId(u.id)
                     }}
                     className="h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10"
-                    title="回溯该 UP 主最近一年的视频"
+                    title="回溯该 UP 主当年视频"
                   >
                     <History className="h-3.5 w-3.5" />
                   </button>
@@ -318,11 +318,11 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
     <AlertDialog open={!!backfillId} onOpenChange={(open) => !open && setBackfillId(null)}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>回溯该 UP 主最近一年视频？</AlertDialogTitle>
+          <AlertDialogTitle>回溯该 UP 主当年视频？</AlertDialogTitle>
           <AlertDialogDescription>
             {backfillingUploader
-              ? `将为「${backfillingUploader.name}」创建任务，拉取最近 365 天的视频。若已有进行中的回溯任务，会自动返回现有任务。`
-              : '将为该 UP 主创建任务，拉取最近 365 天的视频。'}
+              ? `将为「${backfillingUploader.name}」创建任务，拉取当年 1 月 1 日至今的视频。若已有进行中的回溯任务，会自动返回现有任务。`
+              : '将为该 UP 主创建任务，拉取当年 1 月 1 日至今的视频。'}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -15,14 +15,38 @@ from sqlalchemy import select
 
 from app.bilibili import subtitle as bili_sub
 from app.collect import fetch_subtitle as collect_subtitle
+from app.collect.fetch_subtitle import save_subtitle_to_file
 from app.collect import fetch_summary as collect_summary
 from app.collect import fetch_uploader as collect_fetch
 from app.errors import BizError
 from app.models import DEFAULT_USER_ID, Subtitle, SystemConfig, Task, Uploader, Video
+from app.rag.service import ingest_file
 from app.tasks.registry import task_handler
 from app.transcriber import pipeline as asr_pipeline
 
 log = logging.getLogger(__name__)
+
+
+async def _ingest_video_subtitle(video: Video, lines: list[dict]) -> None:
+    """将视频字幕归档并增量导入 RAG 向量库。
+
+    RAG ingest 失败不应阻塞字幕任务，仅记录日志。
+    """
+    try:
+        md_path = save_subtitle_to_file(video, lines)
+        await ingest_file(
+            file_path=md_path,
+            uploader_id=video.uploader_id,
+            up_name=video.uploader.name,
+            replace_video=True,
+        )
+        log.info(
+            "[rag ingest] video=%s, path=%s, ingested",
+            video.id,
+            md_path.name,
+        )
+    except Exception as e:
+        log.warning("[rag ingest] video=%s, failed: %s", video.id, e)
 
 
 @task_handler("ai_summary")
@@ -47,19 +71,29 @@ async def handle_subtitle_fetch(db, task: Task) -> None:
     v = db.get(Video, task.ref_id)
     if v is None or v.user_id != DEFAULT_USER_ID:
         raise BizError("VIDEO_NOT_FOUND", "视频不存在", http_status=404)
+    log.info("[task subtitle_fetch] task=%s, bvid=%s, title=%s", task.task_id, v.bvid, v.title)
     try:
-        await collect_subtitle.fetch_video_subtitle(db, v)
+        sub = await collect_subtitle.fetch_video_subtitle(db, v)
+        log.info("[task subtitle_fetch] task=%s, bvid=%s, fetched bilibili subtitle successfully", task.task_id, v.bvid)
+        await _ingest_video_subtitle(v, sub.lines)
         return
     except BizError as e:
         if e.code not in ("SUBTITLE_UNAVAILABLE", "SUBTITLE_DURATION_MISMATCH"):
+            log.error("[task subtitle_fetch] task=%s, bvid=%s, fetch subtitle failed with non-retryable error: %s - %s", task.task_id, v.bvid, e.code, e.message)
             raise
-        log.info("subtitle %s for %s, falling back to whisper", e.code.lower(), v.bvid)
-        await _run_whisper_fallback(db, v)
+        log.info("[task subtitle_fetch] task=%s, bvid=%s, %s, falling back to whisper: %s", task.task_id, v.bvid, e.code, e.message)
+        await _run_whisper_fallback(db, v, task)
 
 
-async def _run_whisper_fallback(db, v: Video) -> None:
+async def _run_whisper_fallback(db, v: Video, task: Task | None = None) -> None:
     """拉音轨 + 本地 ASR 转写，写入 Subtitle(source='whisper')。"""
-    lines = await asr_pipeline.transcribe_video(v.bvid)
+    task_id = task.task_id if task else None
+    log.info("[task whisper_fallback] task=%s, bvid=%s, starting whisper fallback", task_id, v.bvid)
+    try:
+        lines = await asr_pipeline.transcribe_video(v.bvid)
+    except Exception as e:
+        log.error("[task whisper_fallback] task=%s, bvid=%s, whisper fallback failed: %s", task_id, v.bvid, e)
+        raise
     sub = db.get(Subtitle, v.id)
     now = datetime.now(timezone.utc)
     if sub is None:
@@ -71,16 +105,27 @@ async def _run_whisper_fallback(db, v: Video) -> None:
             fetched_at=now,
         )
         db.add(sub)
+        log.info("[task whisper_fallback] task=%s, bvid=%s, created new whisper subtitle", task_id, v.bvid)
     else:
         sub.language = "zh-CN"
         sub.source = "whisper"
         sub.lines = lines
         sub.fetched_at = now
+        log.info("[task whisper_fallback] task=%s, bvid=%s, updated existing subtitle to whisper", task_id, v.bvid)
     v.has_subtitle = True
     if v.status == "new":
         v.status = "subtitled"
     db.commit()
-    log.info("whisper fallback done for %s: %d lines", v.bvid, len(lines))
+
+    # 本地归档 + RAG 增量导入：data/{up主名称}/YYYYMMDD-{视频名称}.md
+    try:
+        await _ingest_video_subtitle(v, lines)
+        log.info("[task whisper_fallback] task=%s, bvid=%s, saved subtitle to file and ingested", task_id, v.bvid)
+    except Exception as e:
+        # 文件归档/RAG 导入失败不影响 DB 写入，仅记录日志
+        log.warning("[task whisper_fallback] task=%s, bvid=%s, failed to save/ingest subtitle file: %s", task_id, v.bvid, e)
+
+    log.info("[task whisper_fallback] task=%s, bvid=%s, done: %d lines", task_id, v.bvid, len(lines))
 
 
 @task_handler("feed_refresh")

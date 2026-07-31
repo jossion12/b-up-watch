@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import httpx
 
-from app.config import get_settings
+from app.config import get_bilibili_sessdata, get_settings
 from app.errors import BizError
 
 log = logging.getLogger(__name__)
@@ -24,8 +24,9 @@ def _build_headers() -> dict[str, str]:
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9",
     }
-    if s.bilibili_sessdata:
-        headers["Cookie"] = f"SESSDATA={s.bilibili_sessdata}"
+    sessdata = get_bilibili_sessdata()
+    if sessdata:
+        headers["Cookie"] = f"SESSDATA={sessdata}"
     return headers
 
 

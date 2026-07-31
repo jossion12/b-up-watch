@@ -59,18 +59,33 @@ def _migrate_priority_column() -> None:
         pass
 
 
+def _migrate_system_config_columns() -> None:
+    """无 Alembic 时的兜底迁移：确保 system_config 表包含后续新增列。"""
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+            columns = {c["name"] for c in inspector.get_columns("system_config")}
+            if "bilibili_sessdata" not in columns:
+                conn.execute(text("ALTER TABLE system_config ADD COLUMN bilibili_sessdata VARCHAR(512)"))
+                conn.commit()
+    except Exception:
+        pass
+
+
 def init_db() -> None:
     """首次启动建表 + seed 默认模板与系统配置。"""
     from app import models  # noqa: F401  触发注册
 
     # 确保 SQLite 文件目录存在
-    url = get_settings().database_url
+    settings = get_settings()
+    url = settings.database_url
     if url.startswith("sqlite"):
         db_file = Path(url.replace("sqlite:///", ""))
         db_file.parent.mkdir(parents=True, exist_ok=True)
 
     Base.metadata.create_all(bind=engine)
     _migrate_priority_column()
+    _migrate_system_config_columns()
 
     with SessionLocal() as db:
         from app.models import SystemConfig, SummaryTemplate
@@ -107,7 +122,7 @@ def init_db() -> None:
             db.add(SystemConfig(
                 id=1,
                 refresh_interval_sec=600,
-                summary_model="qwen3-235b-a22b-instruct",
+                summary_model=settings.llm_model or "qwen3-235b-a22b-instruct",
                 summary_template_id="tpl_default",
                 auto_summarize=False,
             ))

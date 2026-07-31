@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import traceback
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
@@ -52,11 +53,14 @@ def _resolve_dtype(device: str):
 def load_model(model_path: str, device: str = "cpu", max_new_tokens: int = 4096) -> Any:
     """加载 Qwen3-ASR 模型（单例）。失败抛 RuntimeError。"""
     global _model, _load_error
+    log.info("load_model called: model_path=%s, device=%s, max_new_tokens=%s", model_path, device, max_new_tokens)
     if _model is not None:
+        log.info("Qwen3-ASR model already loaded, returning cached instance")
         return _model
 
     with _model_lock:
         if _model is not None:
+            log.info("Qwen3-ASR model already loaded (after lock), returning cached instance")
             return _model
         try:
             # 抑制 transformers 的啰嗦输出
@@ -64,12 +68,16 @@ def load_model(model_path: str, device: str = "cpu", max_new_tokens: int = 4096)
             _configure_transformers_import()
             from qwen_asr import Qwen3ASRModel  # 自定义包，未必安装
             import torch
+            log.info("qwen_asr and torch imported successfully")
         except ImportError as e:
             _load_error = f"qwen_asr 未安装: {e}"
+            log.error("failed to import qwen_asr/torch: %s", _load_error)
+            log.error("import traceback:\n%s", traceback.format_exc())
             raise RuntimeError(_load_error) from e
 
         if not model_path:
             _load_error = "未配置 QWEN_ASR_MODEL_PATH"
+            log.error("model path is empty")
             raise RuntimeError(_load_error)
 
         requested_device = device or "cpu"
@@ -88,14 +96,17 @@ def load_model(model_path: str, device: str = "cpu", max_new_tokens: int = 4096)
             "max_new_tokens": max_new_tokens,
             "local_files_only": True,
         }
+        log.info("Qwen3-ASR load kwargs: dtype=%s, device_map=%s, max_new_tokens=%s, local_files_only=True", dtype, requested_device, max_new_tokens)
         try:
             m = Qwen3ASRModel.from_pretrained(model_path, **kwargs)
         except Exception as e:
             _load_error = f"模型加载失败: {e}"
+            log.error("Qwen3-ASR model load failed: %s", _load_error)
+            log.error("model load traceback:\n%s", traceback.format_exc())
             raise RuntimeError(_load_error) from e
 
         _model = m
-        log.info("Qwen3-ASR model loaded")
+        log.info("Qwen3-ASR model loaded successfully")
         return _model
 
 
@@ -108,12 +119,16 @@ def reset_for_test() -> None:
 
 def is_available(model_path: str) -> bool:
     """快速检查 ASR 是否可用（不真加载模型）。"""
+    log.info("checking ASR availability: model_path=%s", model_path)
     if not model_path:
+        log.warning("ASR not available: model_path is empty")
         return False
     try:
         _configure_transformers_import()
         import qwen_asr  # noqa: F401
-    except ImportError:
+        log.info("ASR is available (qwen_asr imported)")
+    except ImportError as e:
+        log.warning("ASR not available: qwen_asr import failed: %s", e)
         return False
     return True
 

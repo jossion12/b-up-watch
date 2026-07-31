@@ -8,6 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.insights import router as insights_router
+from app.api.rag import router as rag_router
 from app.api.subtitles import router as subtitles_router
 from app.api.summaries import router as summaries_router
 from app.api.system import router as system_router
@@ -16,8 +17,8 @@ from app.api.templates import router as templates_router
 from app.api.uploaders import router as uploaders_router
 from app.api.videos import router as videos_router
 from app.bilibili.client import close_client
-from app.config import get_settings
-from app.db import init_db
+from app.config import get_settings, set_bilibili_sessdata
+from app.db import SessionLocal, init_db
 from app.errors import register_exception_handlers
 from app.tasks.runner import TaskRunner
 from app.tasks.scheduler import TaskScheduler
@@ -32,6 +33,17 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=settings.log_level)
     log.info("upwatch backend starting, db=%s", settings.database_url)
     init_db()
+
+    # 从数据库加载 B站 SESSDATA 到内存缓存；.env 作为兜底。
+    try:
+        with SessionLocal() as db:
+            from app.models import SystemConfig
+
+            cfg = db.get(SystemConfig, 1)
+            if cfg:
+                set_bilibili_sessdata(cfg.bilibili_sessdata)
+    except Exception as exc:
+        log.warning("failed to load bilibili_sessdata from db: %s", exc)
 
     runner = TaskRunner(tick_interval_sec=settings.worker_tick_sec)
     app.state.runner = runner
@@ -87,6 +99,7 @@ app.include_router(summaries_router, prefix="/api/v1", tags=["summaries"])
 app.include_router(templates_router, prefix="/api/v1", tags=["templates"])
 app.include_router(tasks_router, prefix="/api/v1", tags=["tasks"])
 app.include_router(insights_router, prefix="/api/v1", tags=["insights"])
+app.include_router(rag_router, prefix="/api/v1", tags=["rag"])
 app.include_router(system_router, prefix="/api/v1", tags=["system"])
 
 

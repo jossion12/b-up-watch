@@ -58,3 +58,21 @@ def test_update_system_config_invalid_template(client):
     r = client.patch("/api/v1/system/config", json={"summary_template_id": "not_exist"})
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "TEMPLATE_NOT_FOUND"
+
+
+def test_update_system_config_bilibili_sessdata(client):
+    r = client.patch("/api/v1/system/config", json={"bilibili_sessdata": "test-sessdata-value"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["bilibili_sessdata"] == "test-sessdata-value"
+
+    r = client.get("/api/v1/system/config")
+    assert r.status_code == 200, r.text
+    assert r.json()["bilibili_sessdata"] == "test-sessdata-value"
+
+
+def test_clear_system_config_bilibili_sessdata(client):
+    client.patch("/api/v1/system/config", json={"bilibili_sessdata": "to-clear"})
+    r = client.patch("/api/v1/system/config", json={"bilibili_sessdata": ""})
+    assert r.status_code == 200, r.text
+    assert r.json()["bilibili_sessdata"] is None
