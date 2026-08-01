@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.errors import BizError
 from app.models import Task, Uploader, Video
-from app.schemas import TaskListOut, TaskOut, TaskStatsOut
+from app.schemas import TaskCancelIn, TaskCancelOut, TaskListOut, TaskOut, TaskStatsOut
 
 router = APIRouter()
 
@@ -66,6 +66,7 @@ def _task_out(db: Session, task: Task) -> TaskOut:
 @router.get("/tasks", response_model=TaskListOut)
 def list_tasks(
     status: Optional[str] = Query(None, description="逗号分隔状态，如 running,pending"),
+    task_type: Optional[str] = Query(None, description="任务类型，如 rag_ingest"),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> TaskListOut:
@@ -74,6 +75,8 @@ def list_tasks(
         statuses = [s.strip() for s in status.split(",") if s.strip()]
         if statuses:
             stmt = stmt.where(Task.status.in_(statuses))
+    if task_type:
+        stmt = stmt.where(Task.type == task_type)
     rows = db.execute(stmt.limit(limit)).scalars().all()
     return TaskListOut(items=[_task_out(db, r) for r in rows], total=len(rows))
 
@@ -165,3 +168,51 @@ def retry_task(
         runner.notify()
 
     return _task_out(db, t)
+
+
+# ---------- 取消指定类型的任务 ----------
+
+@router.post("/tasks/cancel", response_model=TaskCancelOut)
+async def cancel_tasks(
+    payload: TaskCancelIn,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> TaskCancelOut:
+    """取消指定类型的任务：删除 pending 任务，取消/标记 running 任务为失败。"""
+    task_types = payload.task_type
+
+    cancelled_ids: list[str] = []
+    deleted_ids: list[str] = []
+
+    pending = db.execute(
+        select(Task).where(Task.type.in_(task_types), Task.status == "pending")
+    ).scalars().all()
+    for t in pending:
+        deleted_ids.append(t.task_id)
+        db.delete(t)
+
+    running = db.execute(
+        select(Task).where(Task.type.in_(task_types), Task.status == "running")
+    ).scalars().all()
+
+    runner = getattr(request.app.state, "runner", None)
+    cancelled_current = False
+    if runner is not None and runner.current_task is not None and runner.current_task.type in task_types:
+        cancelled_current = runner.cancel_current_handler()
+
+    for t in running:
+        if cancelled_current and runner is not None and runner.current_task is not None and runner.current_task.task_id == t.task_id:
+            # 已由 runner 触发取消，等待其把状态设为失败即可
+            cancelled_ids.append(t.task_id)
+            continue
+        # 没有活跃 handler 的 running 任务（僵尸状态），直接标记失败
+        t.status = "failed"
+        t.error = {"code": "CANCELLED", "message": "任务已取消"}
+        t.finished_at = datetime.now(timezone.utc)
+        cancelled_ids.append(t.task_id)
+
+    db.commit()
+    return TaskCancelOut(
+        cancelled_task_ids=cancelled_ids,
+        deleted_task_ids=deleted_ids,
+    )

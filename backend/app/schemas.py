@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class _Base(BaseModel):
@@ -116,6 +116,48 @@ class RefreshOut(_Base):
     type: str
 
 
+class VideoSearchItem(_Base):
+    bvid: str
+    title: str
+    cover_url: Optional[str] = None
+    duration_sec: int = 0
+    published_at: Optional[datetime] = None
+    views: int = 0
+    danmaku_count: int = 0
+    likes: int = 0
+    uploader_mid: Optional[str] = None
+    uploader_name: str = ""
+    uploader_avatar_url: Optional[str] = None
+
+
+class VideoSearchOut(_Base):
+    items: list[VideoSearchItem]
+    page: int
+    has_more: bool
+
+
+class VideoSearchFetchItem(_Base):
+    bvid: str = Field(min_length=1, max_length=20)
+    title: Optional[str] = None
+
+
+class VideoSearchFetchIn(_Base):
+    items: list[VideoSearchFetchItem] = Field(min_length=1, max_length=50)
+
+
+class VideoSearchFetchResult(_Base):
+    bvid: str
+    video_id: Optional[str] = None
+    task_id: Optional[str] = None
+    error: Optional[dict] = None
+
+
+class VideoSearchFetchOut(_Base):
+    task_ids: list[str]
+    video_ids: list[str]
+    results: list[VideoSearchFetchResult]
+
+
 class VideoReadIn(_Base):
     video_ids: list[str] = Field(min_length=1, max_length=200)
 
@@ -161,6 +203,22 @@ class TaskStatsOut(_Base):
 class RagIngestTaskOut(_Base):
     task_id: str
     type: str
+
+
+class TaskCancelIn(_Base):
+    task_type: str | list[str]
+
+    @field_validator('task_type', mode='before')
+    @classmethod
+    def _ensure_list(cls, v: str | list[str]) -> list[str]:
+        if isinstance(v, str):
+            return [v]
+        return v
+
+
+class TaskCancelOut(_Base):
+    cancelled_task_ids: list[str]
+    deleted_task_ids: list[str]
 
 
 # ---------- 字幕 ----------

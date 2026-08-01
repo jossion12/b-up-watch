@@ -29,6 +29,7 @@ class TaskRunner:
     def __init__(self, tick_interval_sec: float = 60.0, session_factory=None):
         self.interval = tick_interval_sec
         self._task: asyncio.Task | None = None
+        self._handler_task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
         # 测试时可注入 session 工厂；默认懒加载 app.db.SessionLocal（支持夹具 monkeypatch）
@@ -74,6 +75,13 @@ class TaskRunner:
         """让下一轮 tick 立即执行（不等 interval）。"""
         self._wake.set()
 
+    def cancel_current_handler(self) -> bool:
+        """取消当前正在执行的 handler 任务。返回是否成功触发取消。"""
+        if self._handler_task is None or self._handler_task.done():
+            return False
+        self._handler_task.cancel()
+        return True
+
     async def _loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -107,8 +115,17 @@ class TaskRunner:
 
             try:
                 handler = get_handler(task.type)
-                await handler(db, task)
-                task.status = "success"
+                self._handler_task = asyncio.create_task(handler(db, task), name=f"handler-{task.task_id}")
+                try:
+                    await self._handler_task
+                except asyncio.CancelledError:
+                    task.status = "failed"
+                    task.error = {"code": "CANCELLED", "message": "任务已取消"}
+                    log.info("task %s cancelled", task.task_id)
+                else:
+                    task.status = "success"
+                finally:
+                    self._handler_task = None
             except BizError as e:
                 task.status = "failed"
                 task.error = {"code": e.code, "message": e.message, "details": e.details}

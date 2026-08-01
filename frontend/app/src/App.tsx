@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Routes, Route, useNavigate } from 'react-router'
-import { Tv, Activity, AlertCircle, RefreshCw, Bell, Loader2, Database } from 'lucide-react'
+import { Tv, Activity, AlertCircle, RefreshCw, Bell, Loader2, Database, Search } from 'lucide-react'
 import AddUploaderDialog from '@/sections/AddUploaderDialog'
 import SettingsDialog from '@/sections/SettingsDialog'
 // import { cn } from '@/lib/utils'
@@ -12,6 +12,7 @@ import Jobs from '@/sections/Jobs'
 import FailedTasks from '@/sections/FailedTasks'
 import VideoPage from '@/sections/VideoPage'
 import ReviewPage from '@/sections/ReviewPage'
+import VideoSearchPage from '@/sections/VideoSearchPage'
 import UpFilter from '@/sections/UpFilter'
 import CategoryFilter from '@/sections/CategoryFilter'
 import { uploadersApi, videosApi, systemApi } from '@/lib/api'
@@ -244,6 +245,12 @@ export default function App() {
                 <AlertCircle className="h-3.5 w-3.5" /> 失败任务
               </button>
               <button
+                onClick={() => navigate('/video-search')}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Search className="h-3.5 w-3.5" /> 视频搜索
+              </button>
+              <button
                 onClick={() => {
                   const target = uploaders[0]?.id
                   navigate(target ? `/review/${target}` : '/')
@@ -355,6 +362,7 @@ export default function App() {
       />
       <Route path="/jobs" element={<Jobs />} />
       <Route path="/failed-tasks" element={<FailedTasks />} />
+      <Route path="/video-search" element={<VideoSearchPage />} />
       <Route
         path="/review/:uploaderId"
         element={<ReviewPage uploaders={uploaders} />}

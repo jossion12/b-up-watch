@@ -15,9 +15,7 @@ import time
 from typing import Any, Mapping
 from urllib.parse import urlencode
 
-import httpx
-
-from app.bilibili.client import _build_headers
+from app.bilibili.client import get_client
 from app.errors import BizError
 
 # img_key 与 sub_key 混排表（B站公开常量）
@@ -39,9 +37,6 @@ class _WbiCache:
 
 _cache = _WbiCache()
 _TTL_SEC = 24 * 3600
-
-# 可在测试中替换
-_async_client_factory = lambda: httpx.AsyncClient(headers=_build_headers(), timeout=10.0)
 
 
 def _extract_key(url: str) -> str:
@@ -66,44 +61,10 @@ async def _fetch_keys(force: bool = False) -> str:
         if not force and _cache.mixin_key and (time.time() - _cache.fetched_at) < _TTL_SEC:
             return _cache.mixin_key
 
-        async with _async_client_factory() as client:
-            resp = await client.get("https://api.bilibili.com/x/web-interface/nav")
+        # 复用默认 B站客户端，统一走 Cookie/UA/错误码映射
+        data = await get_client().get("/x/web-interface/nav")
 
-        if resp.status_code in {412, -412}:
-            raise BizError(
-                "BILIBILI_RATE_LIMITED",
-                "B站触发风控限流，请稍后重试或配置 SESSDATA",
-                http_status=429,
-                details={"upstream_status": resp.status_code},
-            )
-        if resp.status_code != 200:
-            raise BizError(
-                "BILIBILI_API_ERROR",
-                f"B站 nav 接口返回 {resp.status_code}",
-                http_status=502,
-                details={"upstream_status": resp.status_code, "body": resp.text[:200]},
-            )
-
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            raise BizError(
-                "BILIBILI_BAD_RESPONSE",
-                "B站响应非 JSON",
-                http_status=502,
-                details={"body": resp.text[:200]},
-            ) from exc
-
-        code = data.get("code")
-        if code != 0:
-            raise BizError(
-                "BILIBILI_API_ERROR",
-                data.get("message") or "B站 nav 接口错误",
-                http_status=502,
-                details={"upstream_code": code},
-            )
-
-        wbi_img = (data.get("data") or {}).get("wbi_img") or {}
+        wbi_img = data.get("wbi_img") or {}
         img_url = wbi_img.get("img_url") or ""
         sub_url = wbi_img.get("sub_url") or ""
         if not img_url or not sub_url:

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Activity, ArrowLeft, Loader2, Clock, Film, Flame } from 'lucide-react'
+import { Activity, ArrowLeft, Loader2, Clock, Film, Flame, BookOpen, Square } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Progress } from '@/components/ui/progress'
@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { jobsApi, tasksApi, type JobItem, type BackendTask, type TaskStatsOut } from '@/lib/api'
+import { toast } from 'sonner'
 
 const JOB_ICONS: Record<string, string> = {
   subtitle: '📝',
@@ -31,6 +32,13 @@ export default function Jobs() {
   const [tasks, setTasks] = useState<BackendTask[]>([])
   const [tasksLoading, setTasksLoading] = useState(true)
   const [tasksError, setTasksError] = useState<string | null>(null)
+
+  const [ragTasks, setRagTasks] = useState<BackendTask[]>([])
+  const [ragTasksLoading, setRagTasksLoading] = useState(true)
+  const [ragTasksError, setRagTasksError] = useState<string | null>(null)
+  const [cancellingRag, setCancellingRag] = useState(false)
+
+  const [cancellingSubtitle, setCancellingSubtitle] = useState(false)
 
   const [stats, setStats] = useState<TaskStatsOut | null>(null)
   const [statsLoading, setStatsLoading] = useState(true)
@@ -59,6 +67,18 @@ export default function Jobs() {
     }
   }
 
+  const loadRagTasks = async () => {
+    try {
+      const res = await tasksApi.list(['pending', 'running'], 100, 'rag_ingest')
+      setRagTasks(res.items)
+      setRagTasksError(null)
+    } catch (e: any) {
+      setRagTasksError(e?.error?.message || '加载 RAG 任务失败')
+    } finally {
+      setRagTasksLoading(false)
+    }
+  }
+
   const loadStats = async () => {
     try {
       const res = await tasksApi.stats()
@@ -73,10 +93,12 @@ export default function Jobs() {
   useEffect(() => {
     loadJobs()
     loadTasks()
+    loadRagTasks()
     loadStats()
     const id = setInterval(() => {
       loadJobs()
       loadTasks()
+      loadRagTasks()
       loadStats()
     }, 2000)
     return () => clearInterval(id)
@@ -94,6 +116,38 @@ export default function Jobs() {
     }
   }
 
+  const handleCancelRag = async () => {
+    if (ragTasks.length === 0) return
+    setCancellingRag(true)
+    try {
+      const res = await tasksApi.cancelByType('rag_ingest')
+      toast.success(
+        `已停止 ${res.cancelled_task_ids.length + res.deleted_task_ids.length} 个 RAG 导入任务`
+      )
+      loadRagTasks()
+    } catch (e: any) {
+      toast.error(e?.error?.message || '停止 RAG 任务失败')
+    } finally {
+      setCancellingRag(false)
+    }
+  }
+
+  const handleCancelSubtitle = async () => {
+    if (subtitleTasks.length === 0) return
+    setCancellingSubtitle(true)
+    try {
+      const res = await tasksApi.cancelByType(['subtitle_fetch', 'whisper_transcribe'])
+      toast.success(
+        `已停止 ${res.cancelled_task_ids.length + res.deleted_task_ids.length} 个字幕任务`
+      )
+      loadTasks()
+    } catch (e: any) {
+      toast.error(e?.error?.message || '停止字幕任务失败')
+    } finally {
+      setCancellingSubtitle(false)
+    }
+  }
+
   const subtitleTasks = useMemo(
     () => tasks.filter((t) => t.type === 'subtitle_fetch' || t.type === 'whisper_transcribe'),
     [tasks]
@@ -107,12 +161,16 @@ export default function Jobs() {
     tasks,
     emptyText,
     accent,
+    headerAction,
+    isLoading,
   }: {
     icon: React.ElementType
     title: string
     tasks: BackendTask[]
     emptyText: string
     accent: string
+    headerAction?: React.ReactNode
+    isLoading?: boolean
   }) => (
     <Card className="flex flex-col h-full">
       <CardHeader className="pb-3">
@@ -122,13 +180,14 @@ export default function Jobs() {
           <Badge variant="secondary" className="ml-auto text-xs">
             {tasks.length}
           </Badge>
+          {headerAction}
         </div>
         <CardDescription className="text-xs">待执行 + 执行中</CardDescription>
       </CardHeader>
       <CardContent className="flex-1 min-h-0 p-0">
         {tasks.length === 0 ? (
           <div className="h-32 flex items-center justify-center text-sm text-muted-foreground">
-            {tasksLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
             {emptyText}
           </div>
         ) : (
@@ -189,9 +248,9 @@ export default function Jobs() {
         </Button>
         <Activity className="h-4 w-4 text-muted-foreground" />
         <h1 className="font-semibold text-sm">任务调度</h1>
-        {(error || tasksError) && (
+        {(error || tasksError || ragTasksError) && (
           <span className="text-xs text-red-500 ml-auto">
-            {error || tasksError}
+            {error || tasksError || ragTasksError}
           </span>
         )}
       </header>
@@ -372,6 +431,51 @@ export default function Jobs() {
               tasks={subtitleTasks}
               emptyText="暂无字幕相关任务"
               accent="text-blue-500"
+              isLoading={tasksLoading}
+              headerAction={
+                subtitleTasks.length > 0 ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+                    disabled={cancellingSubtitle}
+                    onClick={handleCancelSubtitle}
+                  >
+                    {cancellingSubtitle ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <Square className="h-3 w-3 mr-1 fill-current" />
+                    )}
+                    停止全部
+                  </Button>
+                ) : null
+              }
+            />
+            <QueueCard
+              icon={BookOpen}
+              title="RAG 复盘导入"
+              tasks={ragTasks}
+              emptyText="暂无 RAG 导入任务"
+              accent="text-emerald-500"
+              isLoading={ragTasksLoading}
+              headerAction={
+                ragTasks.length > 0 ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+                    disabled={cancellingRag}
+                    onClick={handleCancelRag}
+                  >
+                    {cancellingRag ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <Square className="h-3 w-3 mr-1 fill-current" />
+                    )}
+                    停止全部
+                  </Button>
+                ) : null
+              }
             />
             {/* AI 总结功能已暂停：隐藏总结队列 */}
             {/* <QueueCard

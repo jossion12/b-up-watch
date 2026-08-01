@@ -128,6 +128,44 @@ export interface VideoListOut {
   total: number
 }
 
+export interface BackendVideoSearchItem {
+  bvid: string
+  title: string
+  cover_url?: string
+  duration_sec: number
+  published_at?: string
+  views: number
+  danmaku_count: number
+  likes: number
+  uploader_mid?: string
+  uploader_name: string
+  uploader_avatar_url?: string
+}
+
+export interface VideoSearchOut {
+  items: BackendVideoSearchItem[]
+  page: number
+  has_more: boolean
+}
+
+export interface VideoSearchFetchItem {
+  bvid: string
+  title?: string
+}
+
+export interface VideoSearchFetchResult {
+  bvid: string
+  video_id?: string
+  task_id?: string
+  error?: { code: string; message: string }
+}
+
+export interface VideoSearchFetchOut {
+  task_ids: string[]
+  video_ids: string[]
+  results: VideoSearchFetchResult[]
+}
+
 export const videosApi = {
   list: (params: {
     start_date: string
@@ -157,6 +195,15 @@ export const videosApi = {
     request<{ task_id: string; type: string }>('/videos/backfill-likes', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  search: (q: string, page = 1, order = '') =>
+    request<VideoSearchOut>(
+      `/videos/search?q=${encodeURIComponent(q)}&page=${page}&order=${encodeURIComponent(order)}`
+    ),
+  fetchSubtitles: (items: VideoSearchFetchItem[]) =>
+    request<VideoSearchFetchOut>('/videos/search/fetch-subtitles', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
     }),
 }
 
@@ -233,6 +280,7 @@ export interface BackendTask {
   operation_label: string
   error?: { code: string; message: string; details?: any }
   priority: number
+  meta?: Record<string, any>
   created_at: string
   finished_at?: string
 }
@@ -248,17 +296,28 @@ export interface TaskStatsOut {
   summary_failed: number
 }
 
+export interface TaskCancelOut {
+  cancelled_task_ids: string[]
+  deleted_task_ids: string[]
+}
+
 export const tasksApi = {
   get: (taskId: string) => request<BackendTask>(`/tasks/${taskId}`),
-  list: (status?: string[], limit?: number) => {
+  list: (status?: string[], limit?: number, type?: string) => {
     const sp = new URLSearchParams()
     if (status?.length) sp.set('status', status.join(','))
     if (limit) sp.set('limit', String(limit))
+    if (type) sp.set('task_type', type)
     return request<{ items: BackendTask[]; total: number }>(`/tasks?${sp.toString()}`)
   },
   stats: () => request<TaskStatsOut>('/tasks/stats'),
   retry: (taskId: string) =>
     request<BackendTask>(`/tasks/${taskId}/retry`, { method: 'POST' }),
+  cancelByType: (taskType: string | string[]) =>
+    request<TaskCancelOut>('/tasks/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ task_type: taskType }),
+    }),
 }
 
 // ---------- 模板 ----------
