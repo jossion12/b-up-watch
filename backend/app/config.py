@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 运行时从数据库加载的 B站 SESSDATA 缓存；优先于 .env 中的值。
 _live_bilibili_sessdata: str | None = None
+# 运行时从数据库加载的完整 B站 Cookie 缓存；优先于 .env 中的值。
+_live_bilibili_cookie: str | None = None
 
 
 def set_bilibili_sessdata(value: str | None) -> None:
@@ -19,6 +21,19 @@ def get_bilibili_sessdata() -> str:
     if _live_bilibili_sessdata is not None:
         return _live_bilibili_sessdata
     return get_settings().bilibili_sessdata
+
+
+def set_bilibili_cookie(value: str | None) -> None:
+    """更新内存中的完整 B站 Cookie 缓存。"""
+    global _live_bilibili_cookie
+    _live_bilibili_cookie = value
+
+
+def get_bilibili_cookie() -> str:
+    """获取当前生效的完整 B站 Cookie：优先运行时缓存，其次 .env。"""
+    if _live_bilibili_cookie is not None:
+        return _live_bilibili_cookie
+    return get_settings().bilibili_cookie
 
 
 class Settings(BaseSettings):
@@ -47,6 +62,7 @@ class Settings(BaseSettings):
 
     # B站
     bilibili_sessdata: str = ""
+    bilibili_cookie: str = ""
     bilibili_user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -73,6 +89,8 @@ class Settings(BaseSettings):
 
     # UP 复盘 RAG
     review_base_dir: str = "./data"
+    # 字幕获取成功后是否自动导入 RAG（会调用 LLM 提取观点卡片）
+    rag_auto_ingest_enabled: bool = False
     # embedding 后端：sentence_transformers 或 ollama
     embedding_provider: str = "sentence_transformers"
     embedding_model: str = "BAAI/bge-large-zh-v1.5"

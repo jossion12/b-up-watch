@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import httpx
 
-from app.config import get_bilibili_sessdata, get_settings
+from app.config import get_bilibili_cookie, get_bilibili_sessdata, get_settings
 from app.errors import BizError
 
 log = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ _API_BASE = "https://api.bilibili.com"
 _RATE_LIMITED_CODES = {-352, -412, -799, -509, -1200}
 
 
-def _build_headers() -> dict[str, str]:
+def _build_headers(extra: Mapping[str, str] | None = None) -> dict[str, str]:
     s = get_settings()
     headers = {
         "User-Agent": s.bilibili_user_agent,
@@ -24,9 +24,15 @@ def _build_headers() -> dict[str, str]:
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9",
     }
-    sessdata = get_bilibili_sessdata()
-    if sessdata:
-        headers["Cookie"] = f"SESSDATA={sessdata}"
+    cookie = get_bilibili_cookie()
+    if cookie:
+        headers["Cookie"] = cookie
+    else:
+        sessdata = get_bilibili_sessdata()
+        if sessdata:
+            headers["Cookie"] = f"SESSDATA={sessdata}"
+    if extra:
+        headers.update(extra)
     return headers
 
 
@@ -34,7 +40,6 @@ class BilibiliClient:
     def __init__(self, timeout: float = 10.0) -> None:
         self._client = httpx.AsyncClient(
             base_url=_API_BASE,
-            headers=_build_headers(),
             timeout=timeout,
         )
 
@@ -47,9 +52,14 @@ class BilibiliClient:
     async def __aexit__(self, *_exc) -> None:
         await self.close()
 
-    async def get(self, path: str, params: Mapping[str, Any] | None = None) -> dict:
+    async def get(
+        self,
+        path: str,
+        params: Mapping[str, Any] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> dict:
         try:
-            resp = await self._client.get(path, params=params)
+            resp = await self._client.get(path, params=params, headers=_build_headers(extra_headers))
         except httpx.HTTPError as exc:
             log.warning("bilibili http error path=%s err=%s", path, exc)
             raise BizError("BILIBILI_UNREACHABLE", "B站接口不可达", http_status=502) from exc

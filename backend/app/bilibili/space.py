@@ -15,6 +15,20 @@ from app.bilibili.wbi import sign
 log = logging.getLogger(__name__)
 
 
+def _space_archive_headers(mid: str) -> dict[str, str]:
+    """构造访问空间投稿列表时的浏览器特征头。"""
+    return {
+        "Referer": f"https://space.bilibili.com/{mid}/video",
+        "Origin": "https://space.bilibili.com",
+        "sec-ch-ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+    }
+
+
 async def fetch_space_archive(
     mid: str,
     pn: int = 1,
@@ -32,7 +46,11 @@ async def fetch_space_archive(
     }
     signed = await sign(params)
     cli = client or get_client()
-    data = await cli.get("/x/space/wbi/arc/search", params=signed)
+    data = await cli.get(
+        "/x/space/wbi/arc/search",
+        params=signed,
+        extra_headers=_space_archive_headers(mid),
+    )
     log.info(
         "fetch_space_archive mid=%s pn=%s response data_keys=%s list_type=%s",
         mid,

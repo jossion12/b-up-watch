@@ -419,6 +419,7 @@ export interface SystemConfig {
   summary_template_id: string
   auto_summarize: boolean
   bilibili_sessdata?: string | null
+  bilibili_cookie?: string | null
 }
 
 export const systemApi = {

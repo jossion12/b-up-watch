@@ -18,6 +18,7 @@ from app.collect import fetch_subtitle as collect_subtitle
 from app.collect.fetch_subtitle import save_subtitle_to_file
 from app.collect import fetch_summary as collect_summary
 from app.collect import fetch_uploader as collect_fetch
+from app.config import get_settings
 from app.errors import BizError
 from app.models import DEFAULT_USER_ID, Subtitle, SystemConfig, Task, Uploader, Video
 from app.rag.service import ingest_uploader, ingest_video
@@ -29,12 +30,20 @@ log = logging.getLogger(__name__)
 
 
 async def _ingest_video_subtitle(video: Video, lines: list[dict], db) -> None:
-    """将视频字幕归档并增量导入 RAG 向量库。
+    """将视频字幕归档，并按配置决定是否增量导入 RAG 向量库。
 
     RAG ingest 失败不应阻塞字幕任务，仅记录日志。
     """
+    settings = get_settings()
     try:
         md_path = save_subtitle_to_file(video, lines)
+        if not settings.rag_auto_ingest_enabled:
+            log.info(
+                "[rag ingest] video=%s, path=%s, auto ingest disabled",
+                video.id,
+                md_path.name,
+            )
+            return
         await ingest_video(
             video_id=video.id,
             db=db,

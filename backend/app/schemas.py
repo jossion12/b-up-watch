@@ -270,6 +270,7 @@ class SystemConfigIn(_Base):
     summary_template_id: Optional[str] = Field(None, min_length=1, max_length=32)
     auto_summarize: Optional[bool] = None
     bilibili_sessdata: Optional[str] = Field(None, max_length=512)
+    bilibili_cookie: Optional[str] = Field(None, max_length=4096)
 
 
 class SystemConfigOut(_Base):
@@ -278,6 +279,7 @@ class SystemConfigOut(_Base):
     summary_template_id: str
     auto_summarize: bool
     bilibili_sessdata: Optional[str] = None
+    bilibili_cookie: Optional[str] = None
 
 
 # ---------- 调度 Job ----------

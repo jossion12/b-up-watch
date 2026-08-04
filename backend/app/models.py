@@ -181,6 +181,7 @@ class SystemConfig(Base):
     summary_template_id: Mapped[str] = mapped_column(String(32), default="tpl_default", nullable=False)
     auto_summarize: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     bilibili_sessdata: Mapped[Optional[str]] = mapped_column(String(512), default=None)
+    bilibili_cookie: Mapped[Optional[str]] = mapped_column(Text, default=None)
     last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 

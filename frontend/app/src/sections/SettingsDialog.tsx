@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { systemApi, type SystemConfig, type SystemStatus } from '@/lib/api'
 
 export default function SettingsDialog() {
@@ -22,6 +23,7 @@ export default function SettingsDialog() {
   const [config, setConfig] = useState<SystemConfig | null>(null)
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [sessdata, setSessdata] = useState('')
+  const [cookie, setCookie] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -33,6 +35,7 @@ export default function SettingsDialog() {
         setConfig(cfg)
         setStatus(s)
         setSessdata(cfg.bilibili_sessdata || '')
+        setCookie(cfg.bilibili_cookie || '')
       })
       .catch((e: any) => {
         setError(e?.error?.message || '加载配置失败')
@@ -46,9 +49,11 @@ export default function SettingsDialog() {
     try {
       const updated = await systemApi.updateConfig({
         bilibili_sessdata: sessdata,
+        bilibili_cookie: cookie,
       })
       setConfig(updated)
       setSessdata(updated.bilibili_sessdata || '')
+      setCookie(updated.bilibili_cookie || '')
       setOpen(false)
     } catch (e: any) {
       setError(e?.error?.message || '保存失败')
@@ -88,7 +93,21 @@ export default function SettingsDialog() {
                 placeholder="从浏览器 Cookie 中复制 SESSDATA 值"
               />
               <p className="text-xs text-muted-foreground">
-                留空表示不使用登录态。修改后即时生效，无需重启后端。
+                留空表示不使用登录态。若已填写完整 Cookie，此项可留空。
+              </p>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="bilibili-cookie">B站完整 Cookie（可选）</Label>
+              <Textarea
+                id="bilibili-cookie"
+                value={cookie}
+                onChange={(e) => setCookie(e.target.value)}
+                placeholder="从浏览器开发者工具复制 bilibili.com 下的完整 Cookie 字符串"
+                rows={4}
+              />
+              <p className="text-xs text-muted-foreground">
+                包含 SESSDATA、buvid3、buvid4 等指纹 Cookie，可显著降低 412 风控概率。修改后即时生效。
               </p>
             </div>
 

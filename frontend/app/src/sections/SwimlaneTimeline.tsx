@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState, useEffect, useLayoutEffect } from 'react'
 import {
   Play, Eye, MessageSquare, ThumbsUp, Clock, List, Sparkles, Download, CircleDot,
-  CalendarClock, ZoomIn, ZoomOut, MousePointer2,
+  CalendarClock, ZoomIn, ZoomOut, MousePointer2, CalendarDays,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
@@ -17,8 +18,8 @@ interface Props {
   onOpenVideo: (v: Video) => void
   filterUpIds: Set<string>
   filterCategories?: Set<string>
-  mode: 'swimlane' | 'list'
-  onModeChange: (m: 'swimlane' | 'list') => void
+  mode: 'swimlane' | 'list' | 'month'
+  onModeChange: (m: 'swimlane' | 'list' | 'month') => void
   now: Date
   onLoadOlder?: (days: number) => void | Promise<void>
 }
@@ -26,12 +27,9 @@ interface Props {
 const MS_PER_DAY = 86400000
 const LABEL_W = 176
 const ROW_H = 84
-// 默认显示 21 天，确保在常见分辨率下时间线宽于视口，从而可以拖动
-const INITIAL_DAYS = 21
+// 固定展示 7 天（一周），按钮用于滑动周窗口
+const VISIBLE_DAYS = 7
 const EXTEND_DAYS = 7
-// 最大回溯 365 天，拖动到边缘时动态加载更早数据
-const MAX_BACK_DAYS = 365
-const EDGE_THRESHOLD = 260
 
 const ZOOM_LEVELS = [110, 150, 210]
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
@@ -77,27 +75,29 @@ export default function SwimlaneTimeline({
 }: Props) {
   const [zoomIdx, setZoomIdx] = useState(1)
   const dayWidth = ZOOM_LEVELS[zoomIdx]
-  const [extraBackDays, setExtraBackDays] = useState(0)
+  // weekOffset=0 表示当前周（以今天为末尾的 7 天），每点一次「上一周」+1
+  const [weekOffset, setWeekOffset] = useState(0)
   const [loadingOlder, setLoadingOlder] = useState(false)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const drag = useRef({ isDown: false, startX: 0, startY: 0, startSL: 0, startST: 0, moved: false })
   const suppressClick = useRef(false)
-  const pendingExtend = useRef(0)
 
-  /** 日期范围：从今天起向前 INITIAL_DAYS + 已扩展天数；向后预留 1 天 */
+  /** 日期范围：固定周一到周日的一周，weekOffset 控制向过去滑动几周 */
   const { days, start } = useMemo(() => {
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const totalBack = INITIAL_DAYS - 1 + extraBackDays
-    const start = new Date(startOfToday.getTime() - totalBack * MS_PER_DAY)
-    const total = totalBack + 1 + 1 // 过去 + 今天 + 未来1天
-    const days = Array.from({ length: total }, (_, i) => new Date(start.getTime() + i * MS_PER_DAY))
+    const dayOfWeek = startOfToday.getDay()
+    const currentMonday = new Date(startOfToday.getTime() - ((dayOfWeek + 6) % 7) * MS_PER_DAY)
+    const start = new Date(currentMonday.getTime() - weekOffset * VISIBLE_DAYS * MS_PER_DAY)
+    const days = Array.from({ length: VISIBLE_DAYS }, (_, i) => new Date(start.getTime() + i * MS_PER_DAY))
     return { days, start }
-  }, [extraBackDays, now])
+  }, [weekOffset, now])
 
   const xOf = (d: Date) => ((d.getTime() - start.getTime()) / MS_PER_DAY) * dayWidth
 
   const rows = useMemo(() => {
+    const windowStart = start.getTime()
+    const windowEnd = windowStart + VISIBLE_DAYS * MS_PER_DAY
     let ups = uploaders
     if (filterUpIds.size > 0) {
       ups = ups.filter((u) => filterUpIds.has(u.id))
@@ -111,19 +111,21 @@ export default function SwimlaneTimeline({
           .filter((v) => {
             if (v.upId !== up.id) return false
             const t = videoTime(v).getTime()
-            return t >= start.getTime() && t <= now.getTime()
+            return t >= windowStart && t < windowEnd
           })
           .sort((a, b) => videoTime(a).getTime() - videoTime(b).getTime())
         const latest = vids.length ? videoTime(vids[vids.length - 1]).getTime() : 0
         return { up, vids, latest }
       })
       .sort((a, b) => b.latest - a.latest)
-  }, [uploaders, videos, filterUpIds, start, now])
+  }, [uploaders, videos, filterUpIds, start])
 
   const totalCount = rows.reduce((s, r) => s + r.vids.length, 0)
   const nowX = xOf(now)
   const todayX = xOf(new Date(now.getFullYear(), now.getMonth(), now.getDate()))
   const trackW = days.length * dayWidth
+  const isTodayInWindow = todayX >= 0 && todayX < trackW
+  const isNowInWindow = nowX >= 0 && nowX <= trackW
 
   const ticks = useMemo(() => {
     const arr: { x: number; major: boolean }[] = []
@@ -133,37 +135,11 @@ export default function SwimlaneTimeline({
     return arr
   }, [days.length, dayWidth])
 
-  /** 初始滚动到最右（今天） */
+  /** 初始滚动到最右（当前窗口末尾） */
   useLayoutEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollLeft = el.scrollWidth
   }, [])
-
-  /** 向左扩展日期后，保持视觉位置不跳 */
-  useLayoutEffect(() => {
-    const el = scrollRef.current
-    if (el && pendingExtend.current > 0) {
-      el.scrollLeft += pendingExtend.current * EXTEND_DAYS * dayWidth
-      pendingExtend.current = 0
-    }
-  }, [extraBackDays, dayWidth])
-
-  /** 滚动到左边缘时加载更早的日期与数据 */
-  const handleScroll = () => {
-    const el = scrollRef.current
-    if (!el) return
-    if (el.scrollLeft < EDGE_THRESHOLD && extraBackDays < MAX_BACK_DAYS && !loadingOlder) {
-      setLoadingOlder(true)
-      pendingExtend.current += 1
-      const promise = onLoadOlder?.(EXTEND_DAYS)
-      setExtraBackDays((d) => Math.min(d + EXTEND_DAYS, MAX_BACK_DAYS))
-      if (promise) {
-        promise.finally(() => setLoadingOlder(false))
-      } else {
-        setLoadingOlder(false)
-      }
-    }
-  }
 
   /** 拖拽平移 */
   useEffect(() => {
@@ -211,9 +187,26 @@ export default function SwimlaneTimeline({
   const scrollToToday = () => {
     const el = scrollRef.current
     if (el) el.scrollTo({ left: el.scrollWidth, behavior: 'smooth' })
+    setWeekOffset(0)
   }
 
-  const isTodayIdx = (i: number) => i === days.length - 2
+  const goToPrevWeek = () => {
+    if (loadingOlder) return
+    setLoadingOlder(true)
+    const promise = onLoadOlder?.(EXTEND_DAYS)
+    setWeekOffset((o) => o + 1)
+    if (promise) {
+      promise.finally(() => setLoadingOlder(false))
+    } else {
+      setLoadingOlder(false)
+    }
+  }
+
+  const goToNextWeek = () => {
+    setWeekOffset((o) => Math.max(o - 1, 0))
+  }
+
+  const isTodayIdx = (i: number) => i === ((now.getDay() + 6) % 7) && weekOffset === 0
 
   return (
     <div className="flex-1 flex flex-col min-w-0 h-full relative">
@@ -222,7 +215,7 @@ export default function SwimlaneTimeline({
         <div>
           <h2 className="font-semibold">视频时间线</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {filterUpIds.size > 0 ? `已筛选 ${filterUpIds.size} 位UP主` : '全部UP主'} · 范围内 {totalCount} 条更新 · 向左拖动查看更早
+            {filterUpIds.size > 0 ? `已筛选 ${filterUpIds.size} 位UP主` : '全部UP主'} · {start.getMonth() + 1}/{start.getDate()} - {days[days.length - 1].getMonth() + 1}/{days[days.length - 1].getDate()} · {totalCount} 条更新
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -243,6 +236,24 @@ export default function SwimlaneTimeline({
               title="放大时间刻度"
             >
               <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+            <button
+              onClick={goToPrevWeek}
+              disabled={loadingOlder}
+              className="flex items-center gap-0.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40"
+              title="查看上一周"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" /> 上一周
+            </button>
+            <button
+              onClick={goToNextWeek}
+              disabled={weekOffset <= 0}
+              className="flex items-center gap-0.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40"
+              title="查看下一周"
+            >
+              下一周 <ChevronRight className="h-3.5 w-3.5" />
             </button>
           </div>
           <button
@@ -270,6 +281,15 @@ export default function SwimlaneTimeline({
             >
               <List className="h-3 w-3" /> 列表
             </button>
+            <button
+              onClick={() => onModeChange('month')}
+              className={cn(
+                'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                mode === 'month' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <CalendarDays className="h-3 w-3" /> 月视图
+            </button>
           </div>
         </div>
       </div>
@@ -277,7 +297,6 @@ export default function SwimlaneTimeline({
       {/* 时间轴主体（可拖拽） */}
       <div
         ref={scrollRef}
-        onScroll={handleScroll}
         onMouseDown={onMouseDown}
         className="flex-1 overflow-auto border-t cursor-grab active:cursor-grabbing"
       >
@@ -295,7 +314,6 @@ export default function SwimlaneTimeline({
             </div>
             {days.map((d, i) => {
               const isToday = isTodayIdx(i)
-              const isFuture = i === days.length - 1
               return (
                 <div
                   key={i}
@@ -305,11 +323,11 @@ export default function SwimlaneTimeline({
                   )}
                   style={{ width: dayWidth, height: 44 }}
                 >
-                  <span className={cn('text-xs font-semibold leading-none', isToday && 'text-primary', isFuture && 'text-muted-foreground/60')}>
+                  <span className={cn('text-xs font-semibold leading-none', isToday && 'text-primary')}>
                     {isToday ? '今天' : `${d.getMonth() + 1}/${d.getDate()}`}
                   </span>
                   <span className="text-[10px] text-muted-foreground mt-1 leading-none">
-                    {isFuture ? '明天' : WEEKDAYS[d.getDay()]}
+                    {WEEKDAYS[d.getDay()]}
                   </span>
                 </div>
               )
@@ -325,14 +343,18 @@ export default function SwimlaneTimeline({
                 style={{ left: LABEL_W + t.x }}
               />
             ))}
-            <div
-              className="absolute top-0 bottom-0 bg-primary/[0.035] pointer-events-none"
-              style={{ left: LABEL_W + todayX, width: dayWidth }}
-            />
-            <div className="absolute top-0 bottom-0 z-20 pointer-events-none" style={{ left: LABEL_W + nowX }}>
-              <div className="w-px h-full bg-primary/70" />
-              <div className="absolute -top-0 -translate-x-1/2 h-1.5 w-1.5 rounded-full bg-primary" />
-            </div>
+            {isTodayInWindow && (
+              <div
+                className="absolute top-0 bottom-0 bg-primary/[0.035] pointer-events-none"
+                style={{ left: LABEL_W + todayX, width: dayWidth }}
+              />
+            )}
+            {isNowInWindow && (
+              <div className="absolute top-0 bottom-0 z-20 pointer-events-none" style={{ left: LABEL_W + nowX }}>
+                <div className="w-px h-full bg-primary/70" />
+                <div className="absolute -top-0 -translate-x-1/2 h-1.5 w-1.5 rounded-full bg-primary" />
+              </div>
+            )}
 
             {rows.length === 0 && (
               <div className="py-20 text-center text-sm text-muted-foreground">没有匹配的UP主，请调整筛选条件</div>

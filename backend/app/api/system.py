@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings, set_bilibili_sessdata
+from app.config import get_settings, set_bilibili_cookie, set_bilibili_sessdata
 from app.db import get_db
 from app.errors import BizError
 from app.models import Subtitle, SummaryTemplate, SystemConfig, Task, Uploader, Video
@@ -74,6 +74,7 @@ def get_system_config(db: Session = Depends(get_db)) -> SystemConfigOut:
         summary_template_id=cfg.summary_template_id,
         auto_summarize=cfg.auto_summarize,
         bilibili_sessdata=cfg.bilibili_sessdata,
+        bilibili_cookie=cfg.bilibili_cookie,
     )
 
 
@@ -101,6 +102,9 @@ def update_system_config(
     if payload.bilibili_sessdata is not None:
         cfg.bilibili_sessdata = payload.bilibili_sessdata or None
         set_bilibili_sessdata(cfg.bilibili_sessdata)
+    if payload.bilibili_cookie is not None:
+        cfg.bilibili_cookie = payload.bilibili_cookie or None
+        set_bilibili_cookie(cfg.bilibili_cookie)
 
     cfg.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -111,6 +115,7 @@ def update_system_config(
         summary_template_id=cfg.summary_template_id,
         auto_summarize=cfg.auto_summarize,
         bilibili_sessdata=cfg.bilibili_sessdata,
+        bilibili_cookie=cfg.bilibili_cookie,
     )
 
 

@@ -17,7 +17,7 @@ from app.api.templates import router as templates_router
 from app.api.uploaders import router as uploaders_router
 from app.api.videos import router as videos_router
 from app.bilibili.client import close_client
-from app.config import get_settings, set_bilibili_sessdata
+from app.config import get_settings, set_bilibili_cookie, set_bilibili_sessdata
 from app.db import SessionLocal, init_db
 from app.errors import register_exception_handlers
 from app.tasks.runner import TaskRunner
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     log.info("upwatch backend starting, db=%s", settings.database_url)
     init_db()
 
-    # 从数据库加载 B站 SESSDATA 到内存缓存；.env 作为兜底。
+    # 从数据库加载 B站 SESSDATA / 完整 Cookie 到内存缓存；.env 作为兜底。
     try:
         with SessionLocal() as db:
             from app.models import SystemConfig
@@ -42,8 +42,9 @@ async def lifespan(app: FastAPI):
             cfg = db.get(SystemConfig, 1)
             if cfg:
                 set_bilibili_sessdata(cfg.bilibili_sessdata)
+                set_bilibili_cookie(cfg.bilibili_cookie)
     except Exception as exc:
-        log.warning("failed to load bilibili_sessdata from db: %s", exc)
+        log.warning("failed to load bilibili config from db: %s", exc)
 
     runner = TaskRunner(tick_interval_sec=settings.worker_tick_sec)
     app.state.runner = runner

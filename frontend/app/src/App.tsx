@@ -6,6 +6,7 @@ import SettingsDialog from '@/sections/SettingsDialog'
 // import { cn } from '@/lib/utils'
 import SwimlaneTimeline from '@/sections/SwimlaneTimeline'
 import Timeline from '@/sections/Timeline'
+import MonthlyTimeline from '@/sections/MonthlyTimeline'
 // AI 总结功能已暂停：隐藏洞察页
 // import Insights from '@/sections/Insights'
 import Jobs from '@/sections/Jobs'
@@ -29,7 +30,13 @@ function formatDate(d: Date) {
 
 export default function App() {
   const navigate = useNavigate()
-  const [centerMode, setCenterMode] = useState<'swimlane' | 'list'>('swimlane')
+  const [centerMode, setCenterMode] = useState<'swimlane' | 'list' | 'month'>('swimlane')
+  const [currentMonth, setCurrentMonth] = useState<Date>(() => {
+    const d = new Date(NOW)
+    d.setDate(1)
+    d.setHours(0, 0, 0, 0)
+    return d
+  })
   const [filterUpIds, setFilterUpIds] = useState<Set<string>>(new Set())
   const [filterCategories, setFilterCategories] = useState<Set<string>>(new Set())
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null)
@@ -94,6 +101,21 @@ export default function App() {
       setStartDate(newStart)
     } catch (e: any) {
       setError(e?.error?.message || '加载更早视频失败')
+    }
+  }
+
+  const loadMonthVideos = async (month: Date) => {
+    const start = new Date(month.getFullYear(), month.getMonth(), 1)
+    const end = new Date(month.getFullYear(), month.getMonth() + 1, 0)
+    try {
+      const res = await videosApi.list({
+        start_date: formatDate(start),
+        end_date: formatDate(end),
+        limit: 1000,
+      })
+      mergeVideos(res.items.map((v: BackendVideo) => mapVideo(v, NOW)))
+    } catch (e: any) {
+      setError(e?.error?.message || '加载月份视频失败')
     }
   }
 
@@ -320,7 +342,22 @@ export default function App() {
 
             {/* 主体 */}
             <div className="flex-1 flex min-h-0">
-              {centerMode === 'swimlane' ? (
+              {centerMode === 'month' ? (
+                <MonthlyTimeline
+                  videos={filteredVideos}
+                  uploaders={uploaders}
+                  currentMonth={currentMonth}
+                  onMonthChange={(m) => {
+                    setCurrentMonth(m)
+                    loadMonthVideos(m)
+                  }}
+                  onOpenVideo={handleOpenVideo}
+                  filterUpIds={filterUpIds}
+                  filterCategories={filterCategories}
+                  mode={centerMode}
+                  onModeChange={setCenterMode}
+                />
+              ) : centerMode === 'swimlane' ? (
                 <SwimlaneTimeline
                   videos={filteredVideos}
                   uploaders={uploaders}

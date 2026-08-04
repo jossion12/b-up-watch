@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Play, Eye, MessageSquare, ThumbsUp, Sparkles, Download, CircleDot, Clock, List } from 'lucide-react'
+import { Play, Eye, MessageSquare, ThumbsUp, Sparkles, Download, CircleDot, Clock, List, CalendarDays } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { videoTime } from '@/lib/format'
@@ -21,8 +21,8 @@ interface Props {
   onOpenVideo: (v: Video) => void
   filterUpIds: Set<string>
   filterCategories?: Set<string>
-  mode: 'swimlane' | 'list'
-  onModeChange: (m: 'swimlane' | 'list') => void
+  mode: 'swimlane' | 'list' | 'month'
+  onModeChange: (m: 'swimlane' | 'list' | 'month') => void
   now: Date
 }
 
@@ -142,6 +142,15 @@ export default function Timeline({
               )}
             >
               <List className="h-3 w-3" /> 列表
+            </button>
+            <button
+              onClick={() => onModeChange('month')}
+              className={cn(
+                'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                mode === 'month' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <CalendarDays className="h-3 w-3" /> 月视图
             </button>
           </div>
         </div>

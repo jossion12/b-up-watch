@@ -68,6 +68,9 @@ def _migrate_system_config_columns() -> None:
             if "bilibili_sessdata" not in columns:
                 conn.execute(text("ALTER TABLE system_config ADD COLUMN bilibili_sessdata VARCHAR(512)"))
                 conn.commit()
+            if "bilibili_cookie" not in columns:
+                conn.execute(text("ALTER TABLE system_config ADD COLUMN bilibili_cookie TEXT"))
+                conn.commit()
     except Exception:
         pass
 
