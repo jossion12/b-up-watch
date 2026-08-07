@@ -433,6 +433,77 @@ async def test_runner_subtitle_fetch_mismatch_falls_back_to_whisper(db_session_f
 
 
 @pytest.mark.asyncio
+async def test_runner_subtitle_fetch_real_mismatch_falls_back_to_whisper(db_session_factory, monkeypatch):
+    """B站返回了真实字幕但时长不匹配 → 走完整 fetch + fallback，最终只写入一条 whisper 字幕。
+
+    回归：先前 fetch_video_subtitle 在时长校验前就把 B 站字幕 add 进 session，
+    fallback 的 db.get 看不到待 flush 的新对象，导致尝试插入两条同 video_id 字幕，
+    触发 sqlite3.IntegrityError: UNIQUE constraint failed: subtitles.video_id。
+    """
+    from app.tasks.runner import TaskRunner
+    from app.bilibili import subtitle as bili_sub
+
+    async def _fake_info(bvid, client=None):
+        return {"cid": 1, "stat": {"like": 10}}
+
+    async def _fake_tracks(bvid, cid, client=None):
+        return [{"id": 1, "lan": "ai-zh", "ai_type": 0, "subtitle_url": "//x/up.json"}]
+
+    async def _fake_download(url):
+        # 字幕时长只有 3s，与视频 60s 严重不符
+        return [{"start_sec": 0.0, "end_sec": 3.0, "text": "对不上的字幕"}]
+
+    monkeypatch.setattr(bili_sub, "get_video_info", _fake_info)
+    monkeypatch.setattr(bili_sub, "get_player_subtitles", _fake_tracks)
+    monkeypatch.setattr(bili_sub, "download_subtitle_json", _fake_download)
+
+    fake_lines = [
+        {"start_sec": 0.0, "end_sec": 30.0, "text": "你好"},
+        {"start_sec": 30.0, "end_sec": 60.0, "text": "世界"},
+    ]
+
+    async def _fake_transcribe(bvid):
+        return fake_lines
+
+    monkeypatch.setattr("app.transcriber.pipeline.transcribe_video", _fake_transcribe)
+
+    with db_session_factory() as db:
+        up = Uploader(id="u1", user_id="default", bilibili_uid="1", name="A", unread_count=0, notify_enabled=True)
+        db.add(up)
+        v = Video(
+            id="v_wh_real_mismatch", user_id="default", bvid="BVwhRealMismatch", uploader_id="u1",
+            title="t", cover_url=None, duration_sec=60,
+            published_at=datetime.now(timezone.utc),
+            views=0, danmaku_count=0, likes=0, tags=[],
+            status="new", has_subtitle=False, has_summary=False, is_read=False,
+        )
+        db.add(v)
+        t = Task(
+            task_id=uuid.uuid4().hex[:12], type="subtitle_fetch", status="pending",
+            progress=0, ref_type="video", ref_id="v_wh_real_mismatch",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(t)
+        db.commit()
+
+    runner = TaskRunner()
+    processed = await runner.tick()
+    assert processed is not None
+
+    with db_session_factory() as db:
+        t2 = db.query(Task).filter_by(task_id=processed).one()
+        assert t2.status == "success"
+        # 必须只有一条字幕，且为 whisper 覆盖结果
+        sub = db.query(Subtitle).filter_by(video_id="v_wh_real_mismatch").one()
+        assert sub.source == "whisper"
+        assert sub.language == "zh-CN"
+        assert len(sub.lines) == 2
+        v2 = db.query(Video).filter_by(id="v_wh_real_mismatch").one()
+        assert v2.has_subtitle is True
+        assert v2.status == "subtitled"
+
+
+@pytest.mark.asyncio
 async def test_runner_subtitle_fetch_audio_unavailable_marks_complete(db_session_factory, monkeypatch):
     """B站无字幕 → ASR fallback → 音频不可用时直接标记完成，不重复任务。"""
     from app.tasks.runner import TaskRunner

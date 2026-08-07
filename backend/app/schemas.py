@@ -26,6 +26,8 @@ class UploaderOut(_Base):
     last_video_at: Optional[datetime] = None
     group_id: Optional[str] = None
     notify_enabled: bool = True
+    ragflow_dataset_id: Optional[str] = None
+    ragflow_chat_id: Optional[str] = None
     created_at: datetime
 
 

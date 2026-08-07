@@ -15,6 +15,7 @@ from app.bilibili import search as bili_search
 from app.db import get_db
 from app.errors import BizError
 from app.models import DEFAULT_USER_ID, Task, Uploader, Video
+from app.rag.ragflow_sync import cleanup_uploader_ragflow_resources
 from app.tasks.service import create_task
 from app.schemas import (
     UploaderBackfillYearOut,
@@ -167,7 +168,7 @@ def create_uploader(
 # ---------- 3.1.4 取消关注 ----------
 
 @router.delete("/uploaders/{uploader_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_uploader(
+async def delete_uploader(
     uploader_id: str,
     keep_history: bool = Query(True),
     db: Session = Depends(get_db),
@@ -181,6 +182,9 @@ def delete_uploader(
         videos = db.execute(select(Video).where(Video.uploader_id == up.id)).scalars().all()
         for v in videos:
             db.delete(v)
+
+    # 清理 RagFlow 资源与本地语料（失败不影响删除）
+    await cleanup_uploader_ragflow_resources(up, ignore_errors=True)
 
     db.delete(up)
     db.commit()

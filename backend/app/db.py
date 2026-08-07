@@ -75,6 +75,22 @@ def _migrate_system_config_columns() -> None:
         pass
 
 
+def _migrate_uploader_ragflow_columns() -> None:
+    """无 Alembic 时的兜底迁移：确保 uploaders 表包含 RagFlow 资源 ID 列。"""
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+            columns = {c["name"] for c in inspector.get_columns("uploaders")}
+            if "ragflow_dataset_id" not in columns:
+                conn.execute(text("ALTER TABLE uploaders ADD COLUMN ragflow_dataset_id VARCHAR(64)"))
+                conn.commit()
+            if "ragflow_chat_id" not in columns:
+                conn.execute(text("ALTER TABLE uploaders ADD COLUMN ragflow_chat_id VARCHAR(64)"))
+                conn.commit()
+    except Exception:
+        pass
+
+
 def init_db() -> None:
     """首次启动建表 + seed 默认模板与系统配置。"""
     from app import models  # noqa: F401  触发注册
@@ -89,6 +105,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _migrate_priority_column()
     _migrate_system_config_columns()
+    _migrate_uploader_ragflow_columns()
 
     with SessionLocal() as db:
         from app.models import SystemConfig, SummaryTemplate

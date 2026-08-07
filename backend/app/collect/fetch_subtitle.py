@@ -111,6 +111,29 @@ def _subtitle_file_path(video: Video) -> Path:
     return _SUBTITLE_DATA_DIR / uploader_name / file_name
 
 
+def _upsert_subtitle(
+    db: Session, video: Video, language: str, source: str, lines: list[dict]
+) -> Subtitle:
+    """根据 video_id 创建或更新字幕记录。"""
+    sub = db.get(Subtitle, video.id)
+    now = datetime.now(timezone.utc)
+    if sub is None:
+        sub = Subtitle(
+            video_id=video.id,
+            language=language,
+            source=source,
+            lines=lines,
+            fetched_at=now,
+        )
+        db.add(sub)
+    else:
+        sub.language = language
+        sub.source = source
+        sub.lines = lines
+        sub.fetched_at = now
+    return sub
+
+
 def save_subtitle_to_file(video: Video, lines: list[dict]) -> Path:
     """将字幕内容写入本地 Markdown 文件，返回最终路径。"""
     path = _subtitle_file_path(video)
@@ -176,25 +199,9 @@ async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
     source = "uploader" if ai_type == 0 else "bilibili_ai"
     language = track.get("lan") or "zh-CN"
 
-    sub = db.get(Subtitle, video.id)
-    now = datetime.now(timezone.utc)
-    if sub is None:
-        sub = Subtitle(
-            video_id=video.id,
-            language=language,
-            source=source,
-            lines=lines,
-            fetched_at=now,
-        )
-        db.add(sub)
-    else:
-        sub.language = language
-        sub.source = source
-        sub.lines = lines
-        sub.fetched_at = now
-
-    # 占位字幕视为「已完成」，不再尝试 Whisper fallback，也不重复拉取
+    # 占位字幕视为「已完成」，直接写入后返回，不再做时长校验、不再尝试 Whisper fallback
     if _is_placeholder_subtitle(lines):
+        sub = _upsert_subtitle(db, video, language, source, lines)
         log.info("[bili subtitle] bvid=%s, placeholder subtitle detected, treating as complete", video.bvid)
         video.has_subtitle = True
         if video.status == "new":
@@ -207,8 +214,12 @@ async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
             log.warning("[bili subtitle] bvid=%s, failed to save placeholder subtitle/corpus file: %s", video.bvid, e)
         return sub
 
+    # 时长校验必须在写入字幕前完成；
+    # 若校验失败走 Whisper fallback，session 中不能残留待写入的 B 站字幕，
+    # 否则 fallback 会尝试再写一条同 video_id 的字幕，触发唯一约束冲突。
     _check_subtitle_duration(lines, video.duration_sec)
 
+    sub = _upsert_subtitle(db, video, language, source, lines)
     video.has_subtitle = True
     if video.status == "new":
         video.status = "subtitled"

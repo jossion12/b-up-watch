@@ -96,6 +96,22 @@ class Settings(BaseSettings):
     ragflow_corpus_enabled: bool = True
     # RAGFlow 语料输出目录
     ragflow_corpus_dir: str = "./data/corpus"
+    # 是否将生成的语料自动同步到 RagFlow 知识库
+    ragflow_sync_enabled: bool = False
+    # RagFlow 服务地址，例如 http://127.0.0.1:9380
+    ragflow_base_url: str = ""
+    # RagFlow API Key
+    ragflow_api_key: str = ""
+    # RagFlow 创建知识库时使用的 Embedding 模型，例如 "BAAI/bge-large-zh-v1.5@BAAI"
+    ragflow_embedding_model: str = ""
+    # RagFlow 分块方法，默认 naive
+    ragflow_chunk_method: str = "naive"
+    # RagFlow 创建知识库时的语言，默认中文
+    ragflow_dataset_language: str = "Chinese"
+    # 文档解析轮询超时（秒）
+    ragflow_parse_timeout_sec: float = 600.0
+    # 解析轮询间隔（秒）
+    ragflow_parse_poll_interval_sec: float = 3.0
     # embedding 后端：sentence_transformers 或 ollama
     embedding_provider: str = "sentence_transformers"
     embedding_model: str = "BAAI/bge-large-zh-v1.5"

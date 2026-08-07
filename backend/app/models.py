@@ -54,6 +54,9 @@ class Uploader(Base):
     last_video_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     group_id: Mapped[Optional[str]] = mapped_column(String(32))
     notify_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # RagFlow 侧资源 ID，由 rag_ingest 任务维护
+    ragflow_dataset_id: Mapped[Optional[str]] = mapped_column(String(64))
+    ragflow_chat_id: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     videos: Mapped[list["Video"]] = relationship(back_populates="uploader", cascade="all, delete-orphan")

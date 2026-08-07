@@ -24,6 +24,8 @@ from app.websocket import push_task_updated_sync
 
 log = logging.getLogger(__name__)
 
+from app.tasks import notifier
+
 
 class TaskRunner:
     def __init__(self, tick_interval_sec: float = 60.0, session_factory=None):
@@ -58,6 +60,7 @@ class TaskRunner:
         self._wake.clear()
         recovered = self._recover_stale_tasks()
         self._task = asyncio.create_task(self._loop(), name="task-runner")
+        notifier._active_runner = self
         log.info("task runner started, interval=%.1fs, recovered=%d", self.interval, recovered)
 
     async def stop(self) -> None:
@@ -69,6 +72,8 @@ class TaskRunner:
             except asyncio.TimeoutError:
                 self._task.cancel()
         self._task = None
+        if notifier._active_runner is self:
+            notifier._active_runner = None
         log.info("task runner stopped")
 
     def notify(self) -> None:
@@ -127,10 +132,12 @@ class TaskRunner:
                 finally:
                     self._handler_task = None
             except BizError as e:
+                db.rollback()
                 task.status = "failed"
                 task.error = {"code": e.code, "message": e.message, "details": e.details}
                 log.warning("task %s biz-error: %s", task.task_id, e.message)
             except Exception as e:
+                db.rollback()
                 task.status = "failed"
                 task.error = {"code": "TASK_FAILED", "message": str(e) or e.__class__.__name__}
                 log.exception("task %s failed", task.task_id)

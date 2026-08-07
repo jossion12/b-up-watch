@@ -17,18 +17,44 @@ from app.bilibili import subtitle as bili_sub
 from app.collect import fetch_subtitle as collect_subtitle
 from app.collect.corpus import save_ragflow_corpus
 from app.collect.fetch_subtitle import save_subtitle_to_file
-from app.collect import fetch_summary as collect_summary
 from app.collect import fetch_uploader as collect_fetch
 from app.config import get_settings
 from app.errors import BizError
 from app.models import DEFAULT_USER_ID, Subtitle, SystemConfig, Task, Uploader, Video
-# 原 Milvus + LLM 提取的 RAG ingest 路径已暂停，改用 RAGFlow 语料生成
-# from app.rag.service import ingest_uploader, ingest_video
+from app.rag.ragflow_sync import sync_uploader_to_ragflow
 from app.tasks.registry import task_handler
+from app.tasks.notifier import notify_runner
+from app.tasks.service import create_task
 from app.transcriber import pipeline as asr_pipeline
 from app.websocket import push_task_updated_sync
 
 log = logging.getLogger(__name__)
+
+
+def _enqueue_ragflow_sync(db, up: Uploader) -> Task | None:
+    """为 UP 主排队 RagFlow 同步任务，避免重复排队。"""
+    settings = get_settings()
+    if not settings.ragflow_sync_enabled:
+        return None
+    active = db.execute(
+        select(Task).where(
+            Task.type == "rag_ingest",
+            Task.ref_type == "uploader",
+            Task.ref_id == up.id,
+            Task.status.in_(["pending", "running"]),
+        )
+    ).scalar_one_or_none()
+    if active is not None:
+        return active
+    task = create_task(
+        db,
+        task_type="rag_ingest",
+        ref_type="uploader",
+        ref_id=up.id,
+        meta={"up_name": up.name, "trigger": "auto"},
+    )
+    notify_runner()
+    return task
 
 
 async def _ingest_video_subtitle(
@@ -39,13 +65,14 @@ async def _ingest_video_subtitle(
 ) -> None:
     """将视频字幕归档，并生成 RAGFlow 语料文件。
 
-    原 Milvus + LLM 提取的 RAG ingest 路径已暂停，失败不应阻塞字幕任务，仅记录日志。
+    若启用 RagFlow 同步，会自动为该 UP 主排队同步任务。
     """
     settings = get_settings()
     try:
         md_path = save_subtitle_to_file(video, lines)
 
         # 生成 RAGFlow 语料（无 LLM，纯规则清洗）
+        corpus_path: Optional[Path] = None
         if settings.ragflow_corpus_enabled:
             corpus_path = save_ragflow_corpus(video, lines, source=source)
             log.info(
@@ -55,10 +82,16 @@ async def _ingest_video_subtitle(
                 corpus_path.name if corpus_path else "disabled",
             )
 
-        # 原 LLM 提取 + Milvus 写入路径已暂停
-        # if settings.rag_auto_ingest_enabled:
-        #     await ingest_video(video_id=video.id, db=db, replace=True)
-        #     log.info("[rag ingest] video=%s, path=%s, ingested", video.id, md_path.name)
+        # 自动触发 RagFlow 同步
+        if settings.ragflow_sync_enabled and corpus_path:
+            task = _enqueue_ragflow_sync(db, video.uploader)
+            if task is not None:
+                log.info(
+                    "[ragflow sync] enqueued for uploader=%s video=%s task=%s",
+                    video.uploader_id,
+                    video.id,
+                    task.task_id,
+                )
     except Exception as e:
         log.warning("[rag corpus] video=%s, failed: %s", video.id, e)
 
@@ -313,9 +346,9 @@ async def handle_video_stats_refresh(db, task: Task) -> None:
 
 @task_handler("rag_ingest")
 async def handle_rag_ingest(db, task: Task) -> None:
-    """重新生成某位 UP 主下所有有字幕视频的 RAGFlow 语料。
+    """将某位 UP 主的本地语料同步到 RagFlow。
 
-    原 Milvus + LLM 提取的 RAG 索引重建已暂停，现改为批量刷新语料文件。
+    包括：获取/创建知识库、增量/变更上传文件、启动解析并轮询、创建/更新聊天助手。
     """
     if task.ref_type != "uploader" or not task.ref_id:
         raise BizError("TASK_INVALID_REF", "rag_ingest 必须绑定 uploader", http_status=500)
@@ -325,20 +358,9 @@ async def handle_rag_ingest(db, task: Task) -> None:
         raise BizError("UPLOADER_NOT_FOUND", "UP主不存在", http_status=404)
 
     settings = get_settings()
-    if not settings.ragflow_corpus_enabled:
-        log.info("[task rag_ingest] task=%s, uploader=%s, corpus generation disabled", task.task_id, up.id)
+    if not settings.ragflow_sync_enabled:
+        log.info("[task rag_ingest] task=%s, uploader=%s, ragflow sync disabled", task.task_id, up.id)
         return
-
-    videos = db.execute(
-        select(Video).where(
-            Video.uploader_id == up.id,
-            Video.has_subtitle.is_(True),
-        )
-    ).scalars().all()
-
-    total = len(videos)
-    generated = 0
-    failed = 0
 
     def _update_progress(progress: int) -> None:
         task.progress = progress
@@ -355,35 +377,32 @@ async def handle_rag_ingest(db, task: Task) -> None:
             "finished_at": task.finished_at,
         })
 
-    log.info("[task rag_ingest] task=%s, uploader=%s, start, videos=%s", task.task_id, up.id, total)
+    log.info("[task rag_ingest] task=%s, uploader=%s, start ragflow sync", task.task_id, up.id)
 
-    for i, v in enumerate(videos):
-        sub = db.get(Subtitle, v.id)
-        if sub is None or not sub.lines:
-            continue
-        try:
-            save_ragflow_corpus(v, sub.lines, source=sub.source)
-            generated += 1
-        except Exception as e:
-            failed += 1
-            log.warning("[task rag_ingest] task=%s, video=%s, corpus failed: %s", task.task_id, v.id, e)
-
-        if total > 0:
-            _update_progress(int((i + 1) / total * 100))
-
-    task.meta = {
-        **(task.meta or {}),
-        "videos": total,
-        "generated": generated,
-        "failed": failed,
-    }
-    db.commit()
-    log.info(
-        "[task rag_ingest] task=%s, uploader=%s, done: videos=%s generated=%s failed=%s",
-        task.task_id, up.id, total, generated, failed,
-    )
-
-    # 原 Milvus + LLM 提取的 RAG 索引重建路径已暂停
-    # result = await ingest_uploader(uploader_id=up.id, db=db, up_name=up.name, on_progress=_update_progress)
-    # task.meta = {**(task.meta or {}), "files": result["files"], "segments": result["segments"], "chunks": result["chunks"]}
-    # db.commit()
+    try:
+        result = await sync_uploader_to_ragflow(db, up, on_progress=_update_progress)
+        task.meta = {
+            **(task.meta or {}),
+            **result.to_meta(),
+        }
+        db.commit()
+        log.info(
+            "[task rag_ingest] task=%s, uploader=%s, done: dataset=%s chat=%s uploaded=%s replaced=%s skipped=%s failed=%s",
+            task.task_id,
+            up.id,
+            result.dataset_id,
+            result.chat_id,
+            result.uploaded,
+            result.replaced,
+            result.skipped,
+            result.failed,
+        )
+    except BizError:
+        raise
+    except Exception as e:
+        log.exception("[task rag_ingest] task=%s, uploader=%s, sync failed", task.task_id, up.id)
+        raise BizError(
+            "RAGFLOW_SYNC_FAILED",
+            f"RagFlow 同步失败: {e}",
+            http_status=500,
+        ) from e
