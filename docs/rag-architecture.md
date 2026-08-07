@@ -11,11 +11,18 @@ B站官方字幕 / B站 AI 字幕 / Whisper 转写
               ▼
     backend/app/collect/fetch_subtitle.py
               │ 写入 subtitles 表 + save_subtitle_to_file()
+              │
               ▼
-    ┌─────────────────────────────┐
-    │  SQLite: subtitles.lines    │  ← 日常增量 ingest 的数据源
-    │  data/{up_name}/...md       │  ← 本地归档/全量重建数据源
-    └─────────────────────────────┘
+    backend/app/collect/corpus.py  生成 RAGFlow 语料（无 LLM）
+              │
+              ▼
+    data/corpus/{up_name}/...md    ← 当前默认：RAGFlow 摄取源
+              │
+              ▼
+    RAGFlow（外部）                chunking / 检索 / 对话
+
+（原 Milvus 路径已暂停）
+    SQLite: subtitles.lines
               │
               ▼
     backend/app/rag/parser.py      解析字幕行 / Markdown + 停顿切分
@@ -27,19 +34,14 @@ B站官方字幕 / B站 AI 字幕 / Whisper 转写
     backend/app/rag/milvus_store.py  Embedding + Milvus 存储
               │
               ▼
-    Milvus Collection: taoge_review_chunks   (共享 collection，按 video_id/uploader_id 过滤)
-              │
-              ▼
-    backend/app/rag/service.py     ingest / search / chat / video_search
-              │
-              ▼
-    backend/app/api/rag.py         REST API
+    Milvus Collection: taoge_review_chunks
 ```
 
 说明：
 - 字幕获取主流程会把字幕写入 `subtitles` 表，同时归档成本地 Markdown 文件（`data/{up_name}/...`）。
-- 日常增量 ingest 直接读取 `subtitles.lines`，由 `subtitle_fetch` 任务成功后自动触发 `ingest_video()`。
-- 全量重建入口 `/up/{uploader_id}/ingest` 会遍历该 UP 主所有有字幕的视频，逐视频重新生成 chunk。
+- **当前默认方案**：字幕获取成功后生成 **RAGFlow 语料文件**（`data/corpus/{up_name}/YYYYMMDD-{title}.md`），无 LLM 提取、无 Milvus 写入，后续 chunking/检索/对话由 RAGFlow 负责。
+- 原 Milvus + LLM 观点卡片提取路径已暂停（`rag_auto_ingest_enabled=false`，`ingest_video` / `ingest_uploader` 调用已注释）。
+- 全量重建入口 `/up/{uploader_id}/ingest` 现在会批量重新生成该 UP 主下所有有字幕视频的 RAGFlow 语料文件。
 - 向量库使用**共享 Collection**，通过 `video_id` / `uploader_id` 等 metadata 做过滤，既支持按 UP 主查，也支持跨 UP 主全局查。
 
 ## 2. 模块职责

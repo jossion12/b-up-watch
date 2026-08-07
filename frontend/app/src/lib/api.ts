@@ -45,6 +45,7 @@ export interface BackendUploader {
 
 export interface UploaderCreateIn {
   bilibili_uid: string
+  name?: string
   group_id?: string
   category?: string
   notify_enabled?: boolean

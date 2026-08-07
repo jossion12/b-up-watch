@@ -51,6 +51,59 @@ def test_download_audio_ytdlp_missing(monkeypatch):
         audio_fetcher.download_bilibili_audio("BV1x", Path("/tmp"))
 
 
+def test_download_audio_rejects_no_audio_stream(monkeypatch):
+    tmp = Path(tempfile.mkdtemp(prefix="upwatch_test_"))
+    try:
+        (tmp / "BV1noaudio.mp4").write_bytes(b"fake")
+
+        fake_ydl = MagicMock()
+        fake_ydl.extract_info.return_value = {"id": "BV1noaudio", "ext": "mp4"}
+
+        class _YDL:
+            def __init__(self, opts):
+                self.opts = opts
+            def __enter__(self):
+                return fake_ydl
+            def __exit__(self, *exc):
+                return False
+
+        monkeypatch.setitem(sys.modules, "yt_dlp", MagicMock(YoutubeDL=_YDL))
+        # ffprobe 返回空，表示没有音轨
+        monkeypatch.setattr(
+            "app.transcriber.audio_fetcher.subprocess.run",
+            lambda *a, **kw: MagicMock(returncode=0, stdout=""),
+        )
+
+        with pytest.raises(audio_fetcher.AudioUnavailableError, match="没有可识别音轨"):
+            audio_fetcher.download_bilibili_audio("BV1noaudio", tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_has_audio_stream_detects_audio(monkeypatch):
+    monkeypatch.setattr(
+        "app.transcriber.audio_fetcher.subprocess.run",
+        lambda *a, **kw: MagicMock(returncode=0, stdout="audio\n"),
+    )
+    assert audio_fetcher._has_audio_stream(Path("x.m4a")) is True
+
+
+def test_has_audio_stream_detects_missing_audio(monkeypatch):
+    monkeypatch.setattr(
+        "app.transcriber.audio_fetcher.subprocess.run",
+        lambda *a, **kw: MagicMock(returncode=0, stdout=""),
+    )
+    assert audio_fetcher._has_audio_stream(Path("x.mp4")) is False
+
+
+def test_has_audio_stream_treats_ffprobe_failure_as_true(monkeypatch):
+    monkeypatch.setattr(
+        "app.transcriber.audio_fetcher.subprocess.run",
+        lambda *a, **kw: MagicMock(returncode=1, stderr="ffprobe boom"),
+    )
+    assert audio_fetcher._has_audio_stream(Path("x.m4a")) is True
+
+
 # ============== asr ==============
 
 def test_asr_is_available_no_path():
@@ -242,6 +295,23 @@ async def test_transcribe_video_no_asr(monkeypatch):
     assert ei.value.code == "ASR_NOT_AVAILABLE"
 
 
+@pytest.mark.asyncio
+async def test_transcribe_video_audio_unavailable(monkeypatch):
+    """download_bilibili_audio 抛出 AudioUnavailableError 时，应转换为 AUDIO_UNAVAILABLE。"""
+    def _fake_download(*a, **kw):
+        raise audio_fetcher.AudioUnavailableError("没有可识别音轨")
+
+    monkeypatch.setattr(audio_fetcher, "download_bilibili_audio", _fake_download)
+    monkeypatch.setattr(asr_mod, "is_available", lambda *a, **kw: True)
+    from app.config import Settings
+    monkeypatch.setattr(pipeline, "get_settings", lambda: Settings(qwen_asr_model_path="/fake", qwen_asr_device="cpu"))
+
+    from app.errors import BizError
+    with pytest.raises(BizError) as ei:
+        await pipeline.transcribe_video("BV1noaudio")
+    assert ei.value.code == "AUDIO_UNAVAILABLE"
+
+
 # ============== runner fallback ==============
 
 @pytest.mark.asyncio
@@ -358,5 +428,59 @@ async def test_runner_subtitle_fetch_mismatch_falls_back_to_whisper(db_session_f
         assert sub.source == "whisper"
         assert len(sub.lines) == 2
         v2 = db.query(Video).filter_by(id="v_wh_mismatch").one()
+        assert v2.has_subtitle is True
+        assert v2.status == "subtitled"
+
+
+@pytest.mark.asyncio
+async def test_runner_subtitle_fetch_audio_unavailable_marks_complete(db_session_factory, monkeypatch):
+    """B站无字幕 → ASR fallback → 音频不可用时直接标记完成，不重复任务。"""
+    from app.tasks.runner import TaskRunner
+    from app.bilibili import subtitle as bili_sub
+    from app.errors import BizError
+
+    async def _fake_info(bvid, client=None):
+        return {"cid": 1, "stat": {"like": 10}}
+
+    async def _fake_tracks(bvid, cid, client=None):
+        return []
+
+    monkeypatch.setattr(bili_sub, "get_video_info", _fake_info)
+    monkeypatch.setattr(bili_sub, "get_player_subtitles", _fake_tracks)
+
+    async def _fake_transcribe_unavailable(bvid):
+        raise BizError("AUDIO_UNAVAILABLE", "没有可识别音轨", http_status=422)
+
+    monkeypatch.setattr("app.transcriber.pipeline.transcribe_video", _fake_transcribe_unavailable)
+
+    with db_session_factory() as db:
+        up = Uploader(id="u1", user_id="default", bilibili_uid="1", name="A", unread_count=0, notify_enabled=True)
+        db.add(up)
+        v = Video(
+            id="v_wh_no_audio", user_id="default", bvid="BVwhNoAudio", uploader_id="u1",
+            title="t", cover_url=None, duration_sec=180,
+            published_at=datetime.now(timezone.utc),
+            views=0, danmaku_count=0, likes=0, tags=[],
+            status="new", has_subtitle=False, has_summary=False, is_read=False,
+        )
+        db.add(v)
+        t = Task(
+            task_id=uuid.uuid4().hex[:12], type="subtitle_fetch", status="pending",
+            progress=0, ref_type="video", ref_id="v_wh_no_audio",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(t)
+        db.commit()
+
+    runner = TaskRunner()
+    processed = await runner.tick()
+    assert processed is not None
+
+    with db_session_factory() as db:
+        t2 = db.query(Task).filter_by(task_id=processed).one()
+        assert t2.status == "success"
+        # 音频不可用时不应创建 Subtitle 记录
+        assert db.query(Subtitle).filter_by(video_id="v_wh_no_audio").first() is None
+        v2 = db.query(Video).filter_by(id="v_wh_no_audio").one()
         assert v2.has_subtitle is True
         assert v2.status == "subtitled"

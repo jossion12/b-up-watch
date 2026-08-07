@@ -117,7 +117,7 @@ export default function SwimlaneTimeline({
         const latest = vids.length ? videoTime(vids[vids.length - 1]).getTime() : 0
         return { up, vids, latest }
       })
-      .sort((a, b) => b.latest - a.latest)
+      .sort((a, b) => a.up.name.localeCompare(b.up.name, 'zh-CN'))
   }, [uploaders, videos, filterUpIds, start])
 
   const totalCount = rows.reduce((s, r) => s + r.vids.length, 0)

@@ -165,6 +165,46 @@ def test_check_subtitle_duration_ok():
     _check_subtitle_duration(lines, video_duration_sec=60)
 
 
+def test_is_placeholder_subtitle():
+    from app.collect.fetch_subtitle import _is_placeholder_subtitle
+
+    assert _is_placeholder_subtitle([{"text": "啥都木有"}]) is True
+    assert _is_placeholder_subtitle([{"text": "  啥都木有  "}]) is True
+    assert _is_placeholder_subtitle([
+        {"text": "啥都木有"},
+        {"text": ""},
+        {"text": "啥都木有"},
+    ]) is True
+    assert _is_placeholder_subtitle([{"text": "你好"}]) is False
+    assert _is_placeholder_subtitle([{"text": "啥都木有"}, {"text": "你好"}]) is False
+    assert _is_placeholder_subtitle([]) is False
+
+
+def test_is_video_unavailable_error():
+    from app.collect.fetch_subtitle import _is_video_unavailable_error
+    from app.errors import BizError
+
+    assert _is_video_unavailable_error(BizError(
+        "BILIBILI_API_ERROR",
+        "啥都木有",
+        details={"upstream_code": -404, "message": "啥都木有"},
+    )) is True
+    assert _is_video_unavailable_error(BizError(
+        "BILIBILI_API_ERROR",
+        "请求错误",
+        details={"upstream_code": -404, "message": "啥都木有"},
+    )) is False
+    assert _is_video_unavailable_error(BizError(
+        "BILIBILI_API_ERROR",
+        "啥都木有",
+        details={"upstream_code": -500, "message": "服务器错误"},
+    )) is False
+    assert _is_video_unavailable_error(BizError(
+        "SUBTITLE_UNAVAILABLE",
+        "该视频无字幕",
+    )) is False
+
+
 # ============== 本地归档 ==============
 
 def test_sanitize_filename():
@@ -243,6 +283,130 @@ async def test_fetch_video_subtitle_mismatch_not_persisted(db_session_factory, m
             await fetch_video_subtitle(db, v)
         assert ei.value.code == "SUBTITLE_DURATION_MISMATCH"
         assert db.get(Subtitle, v.id) is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_video_subtitle_placeholder_treated_as_complete(db_session_factory, monkeypatch):
+    """B 站返回占位字幕「啥都木有」时，应直接标记完成，不抛异常、不 fallback。"""
+    from app.collect.fetch_subtitle import fetch_video_subtitle
+    from app.bilibili import subtitle as bili_sub
+
+    async def _fake_info(bvid, client=None):
+        return {"cid": 1, "stat": {"like": 10}}
+
+    async def _fake_tracks(bvid, cid, client=None):
+        return [{"id": 1, "lan": "zh-CN", "ai_type": 0, "subtitle_url": "//x/up.json"}]
+
+    async def _fake_download(url):
+        return [{"start_sec": 0.0, "end_sec": 1.0, "text": "啥都木有"}]
+
+    monkeypatch.setattr(bili_sub, "get_video_info", _fake_info)
+    monkeypatch.setattr(bili_sub, "get_player_subtitles", _fake_tracks)
+    monkeypatch.setattr(bili_sub, "download_subtitle_json", _fake_download)
+
+    with db_session_factory() as db:
+        up = Uploader(id="u1", user_id="default", bilibili_uid="1", name="A", unread_count=0, notify_enabled=True)
+        db.add(up)
+        v = Video(
+            id="v_placeholder", user_id="default", bvid="BV1placeholder", uploader_id="u1",
+            title="t", cover_url=None, duration_sec=60,
+            published_at=datetime.now(timezone.utc),
+            views=0, danmaku_count=0, likes=0, tags=[],
+            status="new", has_subtitle=False, has_summary=False, is_read=False,
+        )
+        db.add(v)
+        db.commit()
+        db.refresh(v)
+
+        sub = await fetch_video_subtitle(db, v)
+        assert sub is not None
+        assert sub.source == "uploader"
+        assert sub.lines == [{"start_sec": 0.0, "end_sec": 1.0, "text": "啥都木有"}]
+
+        db.refresh(v)
+        assert v.has_subtitle is True
+        assert v.status == "subtitled"
+
+
+@pytest.mark.asyncio
+async def test_fetch_video_subtitle_unavailable_raises_video_unavailable(db_session_factory, monkeypatch):
+    """B 站 view 接口返回 code=-404 message=啥都木有 时，应转换为 VIDEO_UNAVAILABLE。"""
+    from app.collect.fetch_subtitle import fetch_video_subtitle
+    from app.bilibili import subtitle as bili_sub
+    from app.errors import BizError
+
+    async def _fake_info_unavailable(bvid, client=None):
+        raise BizError(
+            "BILIBILI_API_ERROR",
+            "啥都木有",
+            details={"upstream_code": -404, "message": "啥都木有"},
+        )
+
+    monkeypatch.setattr(bili_sub, "get_video_info", _fake_info_unavailable)
+
+    with db_session_factory() as db:
+        up = Uploader(id="u1", user_id="default", bilibili_uid="1", name="A", unread_count=0, notify_enabled=True)
+        db.add(up)
+        v = Video(
+            id="v_unavailable", user_id="default", bvid="BV1unavailable", uploader_id="u1",
+            title="t", cover_url=None, duration_sec=60,
+            published_at=datetime.now(timezone.utc),
+            views=0, danmaku_count=0, likes=0, tags=[],
+            status="new", has_subtitle=False, has_summary=False, is_read=False,
+        )
+        db.add(v)
+        db.commit()
+        db.refresh(v)
+
+        with pytest.raises(BizError) as ei:
+            await fetch_video_subtitle(db, v)
+        assert ei.value.code == "VIDEO_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_handle_subtitle_fetch_unavailable_marks_complete(db_session_factory, monkeypatch):
+    """任务处理器遇到 VIDEO_UNAVAILABLE 时，应直接标记视频完成，不 fallback。"""
+    from app.tasks.handlers import handle_subtitle_fetch
+    from app.bilibili import subtitle as bili_sub
+    from app.errors import BizError
+
+    async def _fake_info_unavailable(bvid, client=None):
+        raise BizError(
+            "BILIBILI_API_ERROR",
+            "啥都木有",
+            details={"upstream_code": -404, "message": "啥都木有"},
+        )
+
+    monkeypatch.setattr(bili_sub, "get_video_info", _fake_info_unavailable)
+    # 确保不会走到 whisper fallback
+    monkeypatch.setattr("app.tasks.handlers._run_whisper_fallback", lambda db, v, task=None: (_ for _ in ()).throw(AssertionError("should not fallback")))
+
+    with db_session_factory() as db:
+        up = Uploader(id="u1", user_id="default", bilibili_uid="1", name="A", unread_count=0, notify_enabled=True)
+        db.add(up)
+        v = Video(
+            id="v_unavailable_task", user_id="default", bvid="BV1unavailableTask", uploader_id="u1",
+            title="t", cover_url=None, duration_sec=60,
+            published_at=datetime.now(timezone.utc),
+            views=0, danmaku_count=0, likes=0, tags=[],
+            status="new", has_subtitle=False, has_summary=False, is_read=False,
+        )
+        db.add(v)
+        t = Task(
+            task_id=uuid.uuid4().hex[:12], type="subtitle_fetch", status="running",
+            progress=0, ref_type="video", ref_id="v_unavailable_task",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(t)
+        db.commit()
+        db.refresh(v)
+        db.refresh(t)
+
+        await handle_subtitle_fetch(db, t)
+
+        db.refresh(v)
+        assert v.has_subtitle is True
+        assert v.status == "subtitled"
 
 
 # ============== 采集流程 ==============

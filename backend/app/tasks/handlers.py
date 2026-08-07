@@ -15,13 +15,15 @@ from sqlalchemy import select
 
 from app.bilibili import subtitle as bili_sub
 from app.collect import fetch_subtitle as collect_subtitle
+from app.collect.corpus import save_ragflow_corpus
 from app.collect.fetch_subtitle import save_subtitle_to_file
 from app.collect import fetch_summary as collect_summary
 from app.collect import fetch_uploader as collect_fetch
 from app.config import get_settings
 from app.errors import BizError
 from app.models import DEFAULT_USER_ID, Subtitle, SystemConfig, Task, Uploader, Video
-from app.rag.service import ingest_uploader, ingest_video
+# 原 Milvus + LLM 提取的 RAG ingest 路径已暂停，改用 RAGFlow 语料生成
+# from app.rag.service import ingest_uploader, ingest_video
 from app.tasks.registry import task_handler
 from app.transcriber import pipeline as asr_pipeline
 from app.websocket import push_task_updated_sync
@@ -29,33 +31,36 @@ from app.websocket import push_task_updated_sync
 log = logging.getLogger(__name__)
 
 
-async def _ingest_video_subtitle(video: Video, lines: list[dict], db) -> None:
-    """将视频字幕归档，并按配置决定是否增量导入 RAG 向量库。
+async def _ingest_video_subtitle(
+    video: Video,
+    lines: list[dict],
+    db,
+    source: str = "unknown",
+) -> None:
+    """将视频字幕归档，并生成 RAGFlow 语料文件。
 
-    RAG ingest 失败不应阻塞字幕任务，仅记录日志。
+    原 Milvus + LLM 提取的 RAG ingest 路径已暂停，失败不应阻塞字幕任务，仅记录日志。
     """
     settings = get_settings()
     try:
         md_path = save_subtitle_to_file(video, lines)
-        if not settings.rag_auto_ingest_enabled:
+
+        # 生成 RAGFlow 语料（无 LLM，纯规则清洗）
+        if settings.ragflow_corpus_enabled:
+            corpus_path = save_ragflow_corpus(video, lines, source=source)
             log.info(
-                "[rag ingest] video=%s, path=%s, auto ingest disabled",
+                "[rag corpus] video=%s, subtitle=%s, corpus=%s",
                 video.id,
                 md_path.name,
+                corpus_path.name if corpus_path else "disabled",
             )
-            return
-        await ingest_video(
-            video_id=video.id,
-            db=db,
-            replace=True,
-        )
-        log.info(
-            "[rag ingest] video=%s, path=%s, ingested",
-            video.id,
-            md_path.name,
-        )
+
+        # 原 LLM 提取 + Milvus 写入路径已暂停
+        # if settings.rag_auto_ingest_enabled:
+        #     await ingest_video(video_id=video.id, db=db, replace=True)
+        #     log.info("[rag ingest] video=%s, path=%s, ingested", video.id, md_path.name)
     except Exception as e:
-        log.warning("[rag ingest] video=%s, failed: %s", video.id, e)
+        log.warning("[rag corpus] video=%s, failed: %s", video.id, e)
 
 
 @task_handler("ai_summary")
@@ -84,9 +89,16 @@ async def handle_subtitle_fetch(db, task: Task) -> None:
     try:
         sub = await collect_subtitle.fetch_video_subtitle(db, v)
         log.info("[task subtitle_fetch] task=%s, bvid=%s, fetched bilibili subtitle successfully", task.task_id, v.bvid)
-        await _ingest_video_subtitle(v, sub.lines, db)
+        await _ingest_video_subtitle(v, sub.lines, db, source=sub.source)
         return
     except BizError as e:
+        if e.code == "VIDEO_UNAVAILABLE":
+            log.info("[task subtitle_fetch] task=%s, bvid=%s, video unavailable, marking as complete: %s", task.task_id, v.bvid, e.message)
+            v.has_subtitle = True
+            if v.status == "new":
+                v.status = "subtitled"
+            db.commit()
+            return
         if e.code not in ("SUBTITLE_UNAVAILABLE", "SUBTITLE_DURATION_MISMATCH"):
             log.error("[task subtitle_fetch] task=%s, bvid=%s, fetch subtitle failed with non-retryable error: %s - %s", task.task_id, v.bvid, e.code, e.message)
             raise
@@ -100,6 +112,16 @@ async def _run_whisper_fallback(db, v: Video, task: Task | None = None) -> None:
     log.info("[task whisper_fallback] task=%s, bvid=%s, starting whisper fallback", task_id, v.bvid)
     try:
         lines = await asr_pipeline.transcribe_video(v.bvid)
+    except BizError as e:
+        if e.code == "AUDIO_UNAVAILABLE":
+            log.info("[task whisper_fallback] task=%s, bvid=%s, audio unavailable, marking as complete", task_id, v.bvid)
+            v.has_subtitle = True
+            if v.status == "new":
+                v.status = "subtitled"
+            db.commit()
+            return
+        log.error("[task whisper_fallback] task=%s, bvid=%s, whisper fallback failed: %s", task_id, v.bvid, e)
+        raise
     except Exception as e:
         log.error("[task whisper_fallback] task=%s, bvid=%s, whisper fallback failed: %s", task_id, v.bvid, e)
         raise
@@ -126,13 +148,13 @@ async def _run_whisper_fallback(db, v: Video, task: Task | None = None) -> None:
         v.status = "subtitled"
     db.commit()
 
-    # 本地归档 + RAG 增量导入：data/{up主名称}/YYYYMMDD-{视频名称}.md
+    # 本地归档 + RAGFlow 语料生成：data/{up主名称}/YYYYMMDD-{视频名称}.md
     try:
-        await _ingest_video_subtitle(v, lines, db)
-        log.info("[task whisper_fallback] task=%s, bvid=%s, saved subtitle to file and ingested", task_id, v.bvid)
+        await _ingest_video_subtitle(v, lines, db, source="whisper")
+        log.info("[task whisper_fallback] task=%s, bvid=%s, saved subtitle and corpus", task_id, v.bvid)
     except Exception as e:
-        # 文件归档/RAG 导入失败不影响 DB 写入，仅记录日志
-        log.warning("[task whisper_fallback] task=%s, bvid=%s, failed to save/ingest subtitle file: %s", task_id, v.bvid, e)
+        # 文件归档/RAGFlow 语料生成失败不影响 DB 写入，仅记录日志
+        log.warning("[task whisper_fallback] task=%s, bvid=%s, failed to save subtitle/corpus: %s", task_id, v.bvid, e)
 
     log.info("[task whisper_fallback] task=%s, bvid=%s, done: %d lines", task_id, v.bvid, len(lines))
 
@@ -291,13 +313,32 @@ async def handle_video_stats_refresh(db, task: Task) -> None:
 
 @task_handler("rag_ingest")
 async def handle_rag_ingest(db, task: Task) -> None:
-    """重新导入某位 UP 主下所有有字幕视频的 RAG 索引。"""
+    """重新生成某位 UP 主下所有有字幕视频的 RAGFlow 语料。
+
+    原 Milvus + LLM 提取的 RAG 索引重建已暂停，现改为批量刷新语料文件。
+    """
     if task.ref_type != "uploader" or not task.ref_id:
         raise BizError("TASK_INVALID_REF", "rag_ingest 必须绑定 uploader", http_status=500)
 
     up = db.get(Uploader, task.ref_id)
     if up is None or up.user_id != DEFAULT_USER_ID:
         raise BizError("UPLOADER_NOT_FOUND", "UP主不存在", http_status=404)
+
+    settings = get_settings()
+    if not settings.ragflow_corpus_enabled:
+        log.info("[task rag_ingest] task=%s, uploader=%s, corpus generation disabled", task.task_id, up.id)
+        return
+
+    videos = db.execute(
+        select(Video).where(
+            Video.uploader_id == up.id,
+            Video.has_subtitle.is_(True),
+        )
+    ).scalars().all()
+
+    total = len(videos)
+    generated = 0
+    failed = 0
 
     def _update_progress(progress: int) -> None:
         task.progress = progress
@@ -314,21 +355,35 @@ async def handle_rag_ingest(db, task: Task) -> None:
             "finished_at": task.finished_at,
         })
 
-    log.info("[task rag_ingest] task=%s, uploader=%s, start", task.task_id, up.id)
-    result = await ingest_uploader(
-        uploader_id=up.id,
-        db=db,
-        up_name=up.name,
-        on_progress=_update_progress,
-    )
+    log.info("[task rag_ingest] task=%s, uploader=%s, start, videos=%s", task.task_id, up.id, total)
+
+    for i, v in enumerate(videos):
+        sub = db.get(Subtitle, v.id)
+        if sub is None or not sub.lines:
+            continue
+        try:
+            save_ragflow_corpus(v, sub.lines, source=sub.source)
+            generated += 1
+        except Exception as e:
+            failed += 1
+            log.warning("[task rag_ingest] task=%s, video=%s, corpus failed: %s", task.task_id, v.id, e)
+
+        if total > 0:
+            _update_progress(int((i + 1) / total * 100))
+
     task.meta = {
         **(task.meta or {}),
-        "files": result["files"],
-        "segments": result["segments"],
-        "chunks": result["chunks"],
+        "videos": total,
+        "generated": generated,
+        "failed": failed,
     }
     db.commit()
     log.info(
-        "[task rag_ingest] task=%s, uploader=%s, done: files=%s segments=%s chunks=%s",
-        task.task_id, up.id, result["files"], result["segments"], result["chunks"],
+        "[task rag_ingest] task=%s, uploader=%s, done: videos=%s generated=%s failed=%s",
+        task.task_id, up.id, total, generated, failed,
     )
+
+    # 原 Milvus + LLM 提取的 RAG 索引重建路径已暂停
+    # result = await ingest_uploader(uploader_id=up.id, db=db, up_name=up.name, on_progress=_update_progress)
+    # task.meta = {**(task.meta or {}), "files": result["files"], "segments": result["segments"], "chunks": result["chunks"]}
+    # db.commit()

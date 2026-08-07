@@ -166,7 +166,7 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 p-0">
+      <PopoverContent align="end" className="w-80 p-0">
         <div className="p-3 pb-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -189,7 +189,7 @@ export default function UpFilter({ uploaders, selected, onChange, onDelete, onUp
             </button>
           )}
         </div>
-        <ScrollArea className="h-[300px]">
+        <ScrollArea className="h-[380px]">
           <div className="p-2 space-y-0.5">
             {filtered.map((u) => (
               <label

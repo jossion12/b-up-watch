@@ -25,7 +25,10 @@ import type { BackendVideo } from '@/lib/api'
 const NOW = new Date()
 
 function formatDate(d: Date) {
-  return d.toISOString().split('T')[0]
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 export default function App() {
@@ -111,7 +114,7 @@ export default function App() {
       const res = await videosApi.list({
         start_date: formatDate(start),
         end_date: formatDate(end),
-        limit: 1000,
+        limit: 500,
       })
       mergeVideos(res.items.map((v: BackendVideo) => mapVideo(v, NOW)))
     } catch (e: any) {

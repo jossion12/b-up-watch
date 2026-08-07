@@ -24,7 +24,7 @@ _OPERATION_LABELS = {
     "feed_refresh": "拉取视频",
     "whisper_transcribe": "Whisper 转写",
     "video_stats_refresh": "回填点赞",
-    "rag_ingest": "重新导入复盘",
+    "rag_ingest": "生成语料",
 }
 
 

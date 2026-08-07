@@ -102,6 +102,7 @@ export default function AddUploaderDialog({ onAdded }: Props) {
     try {
       await uploadersApi.create({
         bilibili_uid,
+        name,
         category: effectiveCategory || undefined,
         notify_enabled: true,
       })

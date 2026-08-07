@@ -33,6 +33,18 @@ def test_create_with_category(client):
     assert r.json()["uploader"]["category"] == "AI"
 
 
+def test_create_with_name(client):
+    r = client.post("/api/v1/uploaders", json={"bilibili_uid": "946974", "name": "林亦LYi"})
+    assert r.status_code == 201, r.text
+    assert r.json()["uploader"]["name"] == "林亦LYi"
+
+
+def test_create_without_name_uses_uid_placeholder(client):
+    r = client.post("/api/v1/uploaders", json={"bilibili_uid": "946974"})
+    assert r.status_code == 201, r.text
+    assert r.json()["uploader"]["name"] == "UID:946974"
+
+
 def test_patch_category(client):
     create = client.post("/api/v1/uploaders", json={"bilibili_uid": "946974"}).json()
     uid = create["uploader"]["id"]

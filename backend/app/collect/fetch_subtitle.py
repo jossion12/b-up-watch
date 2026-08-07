@@ -10,6 +10,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.bilibili import subtitle as bili_sub
+from app.collect.corpus import save_ragflow_corpus
 from app.config import get_settings
 from app.errors import BizError
 from app.models import Subtitle, Video
@@ -27,6 +28,22 @@ def _subtitle_span_seconds(lines: list[dict]) -> float:
     starts = [float(line.get("start_sec", 0)) for line in lines]
     ends = [float(line.get("end_sec", 0)) for line in lines]
     return max(ends) - min(starts)
+
+
+def _is_placeholder_subtitle(lines: list[dict]) -> bool:
+    """检测 B 站占位字幕：所有非空文本均为「啥都木有」时视为无实质内容。"""
+    non_empty = [str(line.get("text") or "").strip() for line in lines if str(line.get("text") or "").strip()]
+    if not non_empty:
+        return False
+    return all(text == "啥都木有" for text in non_empty)
+
+
+def _is_video_unavailable_error(exc: BizError) -> bool:
+    """检测 B 站接口是否返回「啥都木有」（code=-404），表示视频已不可用。"""
+    if exc.code != "BILIBILI_API_ERROR":
+        return False
+    details = exc.details or {}
+    return details.get("upstream_code") == -404 and "啥都木有" in (exc.message or "")
 
 
 def _check_subtitle_duration(lines: list[dict], video_duration_sec: int) -> None:
@@ -114,7 +131,18 @@ async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
     返回的 like 经常为 null）。
     """
     log.info("[bili subtitle] bvid=%s, fetching video info", video.bvid)
-    info = await bili_sub.get_video_info(video.bvid)
+    try:
+        info = await bili_sub.get_video_info(video.bvid)
+    except BizError as e:
+        if _is_video_unavailable_error(e):
+            log.info("[bili subtitle] bvid=%s, video unavailable on bilibili, treating as complete", video.bvid)
+            raise BizError(
+                "VIDEO_UNAVAILABLE",
+                "该视频在 B 站已不可用（啥都木有），视为已完成",
+                http_status=404,
+                details=e.details,
+            )
+        raise
     cid = info.get("cid")
     if not cid:
         log.warning("[bili subtitle] bvid=%s, cid missing in video info", video.bvid)
@@ -143,7 +171,6 @@ async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
 
     lines = await bili_sub.download_subtitle_json(track["subtitle_url"])
     log.info("[bili subtitle] bvid=%s, downloaded %d subtitle lines", video.bvid, len(lines))
-    _check_subtitle_duration(lines, video.duration_sec)
 
     ai_type = int(track.get("ai_type", 0))
     source = "uploader" if ai_type == 0 else "bilibili_ai"
@@ -166,6 +193,22 @@ async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
         sub.lines = lines
         sub.fetched_at = now
 
+    # 占位字幕视为「已完成」，不再尝试 Whisper fallback，也不重复拉取
+    if _is_placeholder_subtitle(lines):
+        log.info("[bili subtitle] bvid=%s, placeholder subtitle detected, treating as complete", video.bvid)
+        video.has_subtitle = True
+        if video.status == "new":
+            video.status = "subtitled"
+        db.commit()
+        try:
+            save_subtitle_to_file(video, lines)
+            save_ragflow_corpus(video, lines, source=source)
+        except Exception as e:
+            log.warning("[bili subtitle] bvid=%s, failed to save placeholder subtitle/corpus file: %s", video.bvid, e)
+        return sub
+
+    _check_subtitle_duration(lines, video.duration_sec)
+
     video.has_subtitle = True
     if video.status == "new":
         video.status = "subtitled"
@@ -175,9 +218,10 @@ async def fetch_video_subtitle(db: Session, video: Video) -> Subtitle:
     # 本地归档：data/{up主名称}/YYYYMMDD-{视频名称}.md
     try:
         save_subtitle_to_file(video, lines)
+        save_ragflow_corpus(video, lines, source=source)
     except Exception as e:
-        # 文件归档失败不影响 DB 写入，仅记录日志
-        log.warning("[bili subtitle] bvid=%s, failed to save subtitle file: %s", video.bvid, e)
+        # 文件归档/RAGFlow 语料生成失败不影响 DB 写入，仅记录日志
+        log.warning("[bili subtitle] bvid=%s, failed to save subtitle/corpus file: %s", video.bvid, e)
 
     log.info(
         "[bili subtitle] bvid=%s, success: %d lines, source=%s, lang=%s",

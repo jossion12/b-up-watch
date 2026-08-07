@@ -90,7 +90,12 @@ class Settings(BaseSettings):
     # UP 复盘 RAG
     review_base_dir: str = "./data"
     # 字幕获取成功后是否自动导入 RAG（会调用 LLM 提取观点卡片）
+    # 当前已切换为生成 RAGFlow 语料，原 Milvus 导入路径默认关闭
     rag_auto_ingest_enabled: bool = False
+    # 是否自动生成 RAGFlow 语料文件（Markdown，无 LLM）
+    ragflow_corpus_enabled: bool = True
+    # RAGFlow 语料输出目录
+    ragflow_corpus_dir: str = "./data/corpus"
     # embedding 后端：sentence_transformers 或 ollama
     embedding_provider: str = "sentence_transformers"
     embedding_model: str = "BAAI/bge-large-zh-v1.5"

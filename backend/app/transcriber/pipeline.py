@@ -86,6 +86,7 @@ def normalize_to_wav(src: Path, dst: Path) -> None:
         "-err_detect", "ignore_err",
         "-fflags", "+discardcorrupt",
         "-i", str(src),
+        "-vn",  # 只取音频，避免视频流干扰
         "-ar", "16000",
         "-ac", "1",
         str(dst),
@@ -242,6 +243,13 @@ def _transcribe_video_sync(bvid: str) -> list[dict]:
 
         log.info("[ASR done] bvid=%s, lines=%d, chunks=%d", bvid, len(all_lines), len(chunks))
         return all_lines
+    except audio_fetcher.AudioUnavailableError as e:
+        log.warning("[ASR audio unavailable] bvid=%s, %s", bvid, e)
+        raise BizError(
+            "AUDIO_UNAVAILABLE",
+            str(e),
+            http_status=422,
+        ) from e
     except Exception as e:
         log.error("[ASR error] bvid=%s, error=%s", bvid, e)
         raise

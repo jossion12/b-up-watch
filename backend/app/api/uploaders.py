@@ -132,11 +132,16 @@ def create_uploader(
     if existing is not None:
         raise BizError("UPLOADER_ALREADY_EXISTS", "该 UP 主已在关注列表中", http_status=409)
 
+    # 搜索添加时前端已拿到真实昵称；直接 UID 添加则用占位，由采集层回填
+    display_name = payload.name.strip() if payload.name else ""
+    if not display_name:
+        display_name = f"UID:{payload.bilibili_uid}"
+
     up = Uploader(
         id=_new_id(),
         user_id=DEFAULT_USER_ID,
         bilibili_uid=payload.bilibili_uid,
-        name=f"UID:{payload.bilibili_uid}",  # 真实名称由采集层回填
+        name=display_name,
         group_id=payload.group_id,
         category=payload.category,
         notify_enabled=payload.notify_enabled,

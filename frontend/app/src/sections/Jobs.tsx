@@ -73,7 +73,7 @@ export default function Jobs() {
       setRagTasks(res.items)
       setRagTasksError(null)
     } catch (e: any) {
-      setRagTasksError(e?.error?.message || '加载 RAG 任务失败')
+      setRagTasksError(e?.error?.message || '加载语料生成任务失败')
     } finally {
       setRagTasksLoading(false)
     }
@@ -122,11 +122,11 @@ export default function Jobs() {
     try {
       const res = await tasksApi.cancelByType('rag_ingest')
       toast.success(
-        `已停止 ${res.cancelled_task_ids.length + res.deleted_task_ids.length} 个 RAG 导入任务`
+        `已停止 ${res.cancelled_task_ids.length + res.deleted_task_ids.length} 个语料生成任务`
       )
       loadRagTasks()
     } catch (e: any) {
-      toast.error(e?.error?.message || '停止 RAG 任务失败')
+      toast.error(e?.error?.message || '停止语料生成任务失败')
     } finally {
       setCancellingRag(false)
     }
@@ -453,9 +453,9 @@ export default function Jobs() {
             />
             <QueueCard
               icon={BookOpen}
-              title="RAG 复盘导入"
+              title="语料生成"
               tasks={ragTasks}
-              emptyText="暂无 RAG 导入任务"
+              emptyText="暂无语料生成任务"
               accent="text-emerald-500"
               isLoading={ragTasksLoading}
               headerAction={
