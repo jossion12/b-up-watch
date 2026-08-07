@@ -701,7 +701,8 @@ GET /system/status
   "running_tasks": 2,
   "queued_tasks": 1,
   "llm": { "provider": "openai-compatible", "model": "qwen3.5:9b", "available": true },
-  "storage": { "db_mb": 48.2, "subtitles_count": 156 }
+  "storage": { "db_mb": 48.2, "subtitles_count": 156 },
+  "bilibili_login": true
 }
 ```
 
@@ -710,6 +711,7 @@ GET /system/status
 | llm.model | 实际使用的 LLM 模型，取自 `.env` 的 `LLM_MODEL` |
 | llm.available | 是否配置了 `LLM_API_KEY` |
 | refresh_interval_sec | 当前数据库中的采集间隔（与 `.env` 独立） |
+| bilibili_login | B站 Cookie 登录状态：`true` 已登录 / `false` 未登录 / `null` 检测失败 |
 
 #### 3.7.2 查询/更新监控设置
 

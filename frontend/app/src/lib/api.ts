@@ -412,6 +412,7 @@ export interface SystemStatus {
   queued_tasks: number
   llm: { provider: string; model: string; available: boolean }
   storage: { db_mb: number; subtitles_count: number }
+  bilibili_login?: boolean | null
 }
 
 export interface SystemConfig {

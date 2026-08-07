@@ -57,6 +57,7 @@ class BilibiliClient:
         path: str,
         params: Mapping[str, Any] | None = None,
         extra_headers: Mapping[str, str] | None = None,
+        raise_on_business_error: bool = True,
     ) -> dict:
         try:
             resp = await self._client.get(path, params=params, headers=_build_headers(extra_headers))
@@ -100,12 +101,13 @@ class BilibiliClient:
                 message,
                 str(data)[:500],
             )
-            raise BizError(
-                "BILIBILI_API_ERROR",
-                message or "B站接口错误",
-                http_status=502,
-                details={"upstream_code": code, "message": message, "data_preview": str(data)[:200]},
-            )
+            if raise_on_business_error:
+                raise BizError(
+                    "BILIBILI_API_ERROR",
+                    message or "B站接口错误",
+                    http_status=502,
+                    details={"upstream_code": code, "message": message, "data_preview": str(data)[:200]},
+                )
         return data.get("data") or {}
 
 

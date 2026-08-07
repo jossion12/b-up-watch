@@ -263,6 +263,7 @@ class SystemStatusOut(_Base):
     queued_tasks: int
     llm: SystemStatusLLM
     storage: SystemStatusStorage
+    bilibili_login: Optional[bool] = None
 
 
 class SystemConfigIn(_Base):

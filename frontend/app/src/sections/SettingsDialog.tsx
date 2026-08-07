@@ -16,8 +16,18 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { systemApi, type SystemConfig, type SystemStatus } from '@/lib/api'
 
-export default function SettingsDialog() {
-  const [open, setOpen] = useState(false)
+interface SettingsDialogProps {
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}
+
+export default function SettingsDialog({ open: controlledOpen, onOpenChange }: SettingsDialogProps) {
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = (value: boolean) => {
+    setInternalOpen(value)
+    onOpenChange?.(value)
+  }
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [config, setConfig] = useState<SystemConfig | null>(null)

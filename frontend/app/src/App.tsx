@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Routes, Route, useNavigate } from 'react-router'
 import { Tv, Activity, AlertCircle, RefreshCw, Bell, Loader2, Database, Search } from 'lucide-react'
+import { toast } from 'sonner'
 import AddUploaderDialog from '@/sections/AddUploaderDialog'
 import SettingsDialog from '@/sections/SettingsDialog'
 // import { cn } from '@/lib/utils'
@@ -52,6 +53,8 @@ export default function App() {
   const [runningTasks, setRunningTasks] = useState(0)
   const [queuedTasks, setQueuedTasks] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const loginWarningShown = useRef(false)
 
   // 时间线日期范围：默认最近 60 天，向左拖动时动态扩展
   const [startDate, setStartDate] = useState<Date>(() => {
@@ -128,6 +131,16 @@ export default function App() {
       setLastRefreshAt(s.last_refresh_at || null)
       setRunningTasks(s.running_tasks)
       setQueuedTasks(s.queued_tasks)
+      if (s.bilibili_login === false && !loginWarningShown.current) {
+        loginWarningShown.current = true
+        toast.error('B站账号未登录，请打开设置更新 Bilibili Cookie', {
+          duration: 0,
+          action: {
+            label: '去设置',
+            onClick: () => setSettingsOpen(true),
+          },
+        })
+      }
     } catch {
       // ignore
     }
@@ -339,7 +352,7 @@ export default function App() {
                     <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-primary" />
                   )}
                 </button>
-                <SettingsDialog />
+                <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
               </div>
             </header>
 

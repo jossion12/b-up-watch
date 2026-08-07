@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.bilibili.login import check_bilibili_login
 from app.config import get_settings, set_bilibili_cookie, set_bilibili_sessdata
 from app.db import get_db
 from app.errors import BizError
@@ -30,7 +31,7 @@ router = APIRouter()
 
 
 @router.get("/system/status", response_model=SystemStatusOut)
-def system_status(db: Session = Depends(get_db)) -> SystemStatusOut:
+async def system_status(db: Session = Depends(get_db)) -> SystemStatusOut:
     cfg = db.get(SystemConfig, 1)
     settings = get_settings()
 
@@ -48,6 +49,8 @@ def system_status(db: Session = Depends(get_db)) -> SystemStatusOut:
         if os.path.exists(path):
             db_mb = round(os.path.getsize(path) / 1024 / 1024, 2)
 
+    bilibili_login = await check_bilibili_login()
+
     return SystemStatusOut(
         last_refresh_at=cfg.last_refresh_at if cfg else None,
         refresh_interval_sec=cfg.refresh_interval_sec if cfg else 600,
@@ -59,6 +62,7 @@ def system_status(db: Session = Depends(get_db)) -> SystemStatusOut:
             available=bool(settings.llm_api_key),
         ),
         storage=SystemStatusStorage(db_mb=db_mb, subtitles_count=int(sub_count)),
+        bilibili_login=bilibili_login,
     )
 
 # ---------- 3.7.2 系统配置 ----------
