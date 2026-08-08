@@ -175,7 +175,6 @@ class RagFlowClient:
         embedding_model: Optional[str] = None,
         chunk_method: Optional[str] = None,
         description: str = "",
-        language: Optional[str] = None,
     ) -> dict:
         """创建知识库。"""
         settings = get_settings()
@@ -188,9 +187,6 @@ class RagFlowClient:
             body["chunk_method"] = method
         if description:
             body["description"] = description
-        lang = language or settings.ragflow_dataset_language
-        if lang:
-            body["language"] = lang
         return await self._request("POST", "/api/v1/datasets", json=body)
 
     async def get_or_create_dataset(
@@ -200,7 +196,6 @@ class RagFlowClient:
         embedding_model: Optional[str] = None,
         chunk_method: Optional[str] = None,
         dataset_id: Optional[str] = None,
-        language: Optional[str] = None,
     ) -> dict:
         """按名称获取 dataset，不存在则创建。
 
@@ -209,7 +204,6 @@ class RagFlowClient:
             embedding_model: 嵌入模型。
             chunk_method: 分块方法。
             dataset_id: 上次同步时保存的 dataset ID；若仍可用则直接复用。
-            language: dataset 语言，默认从配置读取。
 
         当名称被其他用户占用导致无权限时，会自动追加唯一后缀创建新 dataset，
         避免同名冲突导致同步任务直接失败。
@@ -245,7 +239,6 @@ class RagFlowClient:
                 name,
                 embedding_model=embedding_model,
                 chunk_method=chunk_method,
-                language=language,
             )
         except RagFlowError as exc:
             if not (
@@ -264,7 +257,6 @@ class RagFlowClient:
                 unique_name,
                 embedding_model=embedding_model,
                 chunk_method=chunk_method,
-                language=language,
             )
 
     async def delete_datasets(self, dataset_ids: list[str]) -> None:

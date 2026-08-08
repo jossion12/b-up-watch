@@ -9,6 +9,8 @@ export interface Uploader {
   description: string
   unread: number
   lastActive: string
+  /** RagFlow 聊天助手分享链接，由后端根据 ragflow_chat_id 构建 */
+  ragflowChatUrl?: string
 }
 
 export interface VideoSummary {

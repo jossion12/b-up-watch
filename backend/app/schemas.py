@@ -5,7 +5,29 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.config import get_ragflow_embed_auth, get_settings
+
+
+def build_ragflow_chat_url(chat_id: str | None) -> str | None:
+    """根据当前 SystemConfig.ragflow_embed_auth 与 base URL 拼接 RagFlow embed iframe URL。
+
+    - base URL 优先 RAGFLOW_WEB_URL，回退到 RAGFLOW_BASE_URL；
+    - auth 来自 SystemConfig.ragflow_embed_auth（运行时缓存），与 API Key 分离；
+    - chat_id 缺失 / base / auth 任一为空时返回 None。
+    """
+    if not chat_id:
+        return None
+    settings = get_settings()
+    base = (settings.ragflow_web_url or settings.ragflow_base_url or "").rstrip("/")
+    auth = get_ragflow_embed_auth()
+    if not base or not auth:
+        return None
+    return (
+        f"{base}/chats/share?shared_id={chat_id}"
+        f"&from=chat&auth={auth}&theme=light"
+    )
 
 
 class _Base(BaseModel):
@@ -28,7 +50,15 @@ class UploaderOut(_Base):
     notify_enabled: bool = True
     ragflow_dataset_id: Optional[str] = None
     ragflow_chat_id: Optional[str] = None
+    ragflow_chat_url: Optional[str] = None
     created_at: datetime
+
+    @model_validator(mode="after")
+    def _fallback_ragflow_chat_url(self) -> "UploaderOut":
+        # DB 里若已有 URL，直接用；若缺失则按当前配置现算一条（迁移前的老数据兜底）。
+        if self.ragflow_chat_url is None:
+            self.ragflow_chat_url = build_ragflow_chat_url(self.ragflow_chat_id)
+        return self
 
 
 class UploaderListOut(_Base):
@@ -275,6 +305,7 @@ class SystemConfigIn(_Base):
     auto_summarize: Optional[bool] = None
     bilibili_sessdata: Optional[str] = Field(None, max_length=512)
     bilibili_cookie: Optional[str] = Field(None, max_length=4096)
+    ragflow_embed_auth: Optional[str] = Field(None, max_length=512)
 
 
 class SystemConfigOut(_Base):
@@ -284,6 +315,7 @@ class SystemConfigOut(_Base):
     auto_summarize: bool
     bilibili_sessdata: Optional[str] = None
     bilibili_cookie: Optional[str] = None
+    ragflow_embed_auth: Optional[str] = None
 
 
 # ---------- 调度 Job ----------

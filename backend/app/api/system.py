@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.bilibili.login import check_bilibili_login
-from app.config import get_settings, set_bilibili_cookie, set_bilibili_sessdata
+from app.config import get_settings, set_bilibili_cookie, set_bilibili_sessdata, set_ragflow_embed_auth
 from app.db import get_db
 from app.errors import BizError
 from app.models import Subtitle, SummaryTemplate, SystemConfig, Task, Uploader, Video
@@ -79,6 +79,7 @@ def get_system_config(db: Session = Depends(get_db)) -> SystemConfigOut:
         auto_summarize=cfg.auto_summarize,
         bilibili_sessdata=cfg.bilibili_sessdata,
         bilibili_cookie=cfg.bilibili_cookie,
+        ragflow_embed_auth=cfg.ragflow_embed_auth,
     )
 
 
@@ -109,6 +110,9 @@ def update_system_config(
     if payload.bilibili_cookie is not None:
         cfg.bilibili_cookie = payload.bilibili_cookie or None
         set_bilibili_cookie(cfg.bilibili_cookie)
+    if payload.ragflow_embed_auth is not None:
+        cfg.ragflow_embed_auth = payload.ragflow_embed_auth or None
+        set_ragflow_embed_auth(cfg.ragflow_embed_auth)
 
     cfg.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -120,6 +124,7 @@ def update_system_config(
         auto_summarize=cfg.auto_summarize,
         bilibili_sessdata=cfg.bilibili_sessdata,
         bilibili_cookie=cfg.bilibili_cookie,
+        ragflow_embed_auth=cfg.ragflow_embed_auth,
     )
 
 

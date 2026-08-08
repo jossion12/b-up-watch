@@ -85,6 +85,7 @@ export function mapUploader(u: BackendUploader): Uploader {
     description: u.description || '',
     unread: u.unread_count,
     lastActive: formatRelativeTime(u.last_video_at),
+    ragflowChatUrl: u.ragflow_chat_url,
   }
 }
 

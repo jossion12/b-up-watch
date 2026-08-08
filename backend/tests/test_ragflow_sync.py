@@ -41,7 +41,10 @@ async def test_create_dataset(ragflow_env):
             assert result["id"] == "ds_123"
             assert route.called
             body = json.loads(route.calls[0].request.content)
-            assert body["language"] == "Chinese"
+            assert body["name"] == "test_up"
+            assert "embedding_model" in body
+            assert "chunk_method" in body
+            assert "language" not in body
 
 
 @pytest.mark.asyncio

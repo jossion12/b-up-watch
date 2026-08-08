@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _live_bilibili_sessdata: str | None = None
 # 运行时从数据库加载的完整 B站 Cookie 缓存；优先于 .env 中的值。
 _live_bilibili_cookie: str | None = None
+# 运行时从数据库加载的 RagFlow Web embed auth 缓存；优先于 .env 中的值。
+_live_ragflow_embed_auth: str | None = None
 
 
 def set_bilibili_sessdata(value: str | None) -> None:
@@ -34,6 +36,19 @@ def get_bilibili_cookie() -> str:
     if _live_bilibili_cookie is not None:
         return _live_bilibili_cookie
     return get_settings().bilibili_cookie
+
+
+def set_ragflow_embed_auth(value: str | None) -> None:
+    """更新内存中的 RagFlow Web embed auth 缓存。"""
+    global _live_ragflow_embed_auth
+    _live_ragflow_embed_auth = value
+
+
+def get_ragflow_embed_auth() -> str:
+    """获取当前生效的 RagFlow Web embed auth：优先运行时缓存，其次 .env。"""
+    if _live_ragflow_embed_auth is not None:
+        return _live_ragflow_embed_auth
+    return get_settings().ragflow_embed_auth
 
 
 class Settings(BaseSettings):
@@ -100,8 +115,15 @@ class Settings(BaseSettings):
     ragflow_sync_enabled: bool = False
     # RagFlow 服务地址，例如 http://127.0.0.1:9380
     ragflow_base_url: str = ""
+    # RagFlow Web UI 地址（用于生成聊天分享链接）。默认与 ragflow_base_url 相同；
+    # 当 API 与 Web UI 使用不同端口时（如 Docker 部署 Web 在 80/API 在 9380），需单独配置。
+    ragflow_web_url: str = ""
     # RagFlow API Key
     ragflow_api_key: str = ""
+    # RagFlow Web 端 embed 对话 iframe 使用的 auth 参数。
+    # 注意：这与 API Key 不同；UI 上「嵌入网页」会生成一个固定的 auth 值。
+    # 运行时若数据库 SystemConfig.ragflow_embed_auth 有值，会覆盖此处。
+    ragflow_embed_auth: str = "x6trEIhnczD9vljT4q_HHvvovNPxpWwL"
     # RagFlow 创建知识库时使用的 Embedding 模型，例如 "BAAI/bge-large-zh-v1.5@BAAI"
     ragflow_embedding_model: str = ""
     # RagFlow 分块方法，默认 naive

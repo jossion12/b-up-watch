@@ -40,6 +40,8 @@ export interface BackendUploader {
   last_video_at?: string
   group_id?: string
   notify_enabled: boolean
+  ragflow_chat_id?: string
+  ragflow_chat_url?: string
   created_at: string
 }
 

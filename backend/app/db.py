@@ -71,6 +71,9 @@ def _migrate_system_config_columns() -> None:
             if "bilibili_cookie" not in columns:
                 conn.execute(text("ALTER TABLE system_config ADD COLUMN bilibili_cookie TEXT"))
                 conn.commit()
+            if "ragflow_embed_auth" not in columns:
+                conn.execute(text("ALTER TABLE system_config ADD COLUMN ragflow_embed_auth VARCHAR(512)"))
+                conn.commit()
     except Exception:
         pass
 
@@ -86,6 +89,9 @@ def _migrate_uploader_ragflow_columns() -> None:
                 conn.commit()
             if "ragflow_chat_id" not in columns:
                 conn.execute(text("ALTER TABLE uploaders ADD COLUMN ragflow_chat_id VARCHAR(64)"))
+                conn.commit()
+            if "ragflow_chat_url" not in columns:
+                conn.execute(text("ALTER TABLE uploaders ADD COLUMN ragflow_chat_url VARCHAR(1024)"))
                 conn.commit()
     except Exception:
         pass

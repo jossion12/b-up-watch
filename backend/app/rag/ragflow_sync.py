@@ -24,6 +24,7 @@ from app.collect.corpus import _sanitize_filename, clear_ragflow_corpus, get_cor
 from app.errors import BizError
 from app.models import Uploader
 from app.rag.ragflow_client import RagFlowClient, RagFlowError
+from app.schemas import build_ragflow_chat_url
 
 log = logging.getLogger(__name__)
 
@@ -124,7 +125,6 @@ async def _ensure_dataset(client: RagFlowClient, up: Uploader) -> str:
         embedding_model=settings.ragflow_embedding_model,
         chunk_method=settings.ragflow_chunk_method,
         dataset_id=up.ragflow_dataset_id,
-        language=settings.ragflow_dataset_language,
     )
     dataset_id = dataset["id"]
     if up.ragflow_dataset_id != dataset_id:
@@ -286,6 +286,7 @@ async def _ensure_chat(
     if chat_id:
         try:
             await client.update_chat(chat_id, dataset_ids=[dataset_id])
+            up.ragflow_chat_url = build_ragflow_chat_url(chat_id)
             return chat_id
         except RagFlowError as exc:
             log.warning(
@@ -308,6 +309,7 @@ async def _ensure_chat(
         chat_id = chat["id"]
 
     up.ragflow_chat_id = chat_id
+    up.ragflow_chat_url = build_ragflow_chat_url(chat_id)
     return chat_id
 
 

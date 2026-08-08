@@ -57,6 +57,9 @@ class Uploader(Base):
     # RagFlow 侧资源 ID，由 rag_ingest 任务维护
     ragflow_dataset_id: Mapped[Optional[str]] = mapped_column(String(64))
     ragflow_chat_id: Mapped[Optional[str]] = mapped_column(String(64))
+    # 由 ragflow_chat_id + SystemConfig.ragflow_embed_auth + base URL 拼出的 iframe URL；
+    # 持久化后，前端直接读这里，避免每次请求现算。
+    ragflow_chat_url: Mapped[Optional[str]] = mapped_column(String(1024))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     videos: Mapped[list["Video"]] = relationship(back_populates="uploader", cascade="all, delete-orphan")
@@ -185,6 +188,9 @@ class SystemConfig(Base):
     auto_summarize: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     bilibili_sessdata: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     bilibili_cookie: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    # RagFlow Web embed iframe 使用的 auth 参数；为空时回落到 settings.ragflow_embed_auth。
+    # 与 API Key 区分开：API Key 仅用于后端调用 RagFlow HTTP API。
+    ragflow_embed_auth: Mapped[Optional[str]] = mapped_column(String(512), default=None)
     last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 

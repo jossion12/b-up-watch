@@ -17,7 +17,7 @@ from app.api.templates import router as templates_router
 from app.api.uploaders import router as uploaders_router
 from app.api.videos import router as videos_router
 from app.bilibili.client import close_client
-from app.config import get_settings, set_bilibili_cookie, set_bilibili_sessdata
+from app.config import get_settings, set_bilibili_cookie, set_bilibili_sessdata, set_ragflow_embed_auth
 from app.db import SessionLocal, init_db
 from app.errors import register_exception_handlers
 from app.tasks.runner import TaskRunner
@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI):
             if cfg:
                 set_bilibili_sessdata(cfg.bilibili_sessdata)
                 set_bilibili_cookie(cfg.bilibili_cookie)
+                set_ragflow_embed_auth(cfg.ragflow_embed_auth)
     except Exception as exc:
         log.warning("failed to load bilibili config from db: %s", exc)
 
