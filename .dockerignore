@@ -1,0 +1,29 @@
+# 顶层 .dockerignore,防止误把无用文件塞进构建上下文
+.git/
+.gitnexus/
+.github/
+.claude/
+.openwiki/
+.pytest_cache/
+
+# 文档(不进镜像)
+docs/
+
+# 环境
+.env
+.env.*
+!.env.docker.example
+
+# IDE
+.vscode/
+.idea/
+
+# 数据
+backend/data/
+data/
+
+# 构建产物
+frontend/app/dist/
+
+# 日志
+*.log

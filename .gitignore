@@ -13,3 +13,9 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Environment files (keep *.example checked in)
+.env
+.env.*
+!.env.example
+!.env.docker.example

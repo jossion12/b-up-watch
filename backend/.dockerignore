@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 环境
+.env
+.env.*
+
+# 数据(挂载到 volume,不进镜像)
+data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Git
+.git/
+.gitignore
+
+# 测试
+tests/
+
+# Docker 自身
+Dockerfile
+.dockerignore

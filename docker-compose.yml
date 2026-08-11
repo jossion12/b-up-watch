@@ -1,0 +1,80 @@
+# UP雷达 · Docker Compose
+#
+# 启动:
+#   docker compose up -d
+#   docker compose logs -f
+#
+# 停止(保留数据):
+#   docker compose down
+#
+# 彻底清理(同时删除数据 volume):
+#   docker compose down -v
+#
+# 启用本地 ASR(可选,需要 GPU):
+#   BACKEND_TARGET=asr docker compose build backend
+#   BACKEND_TARGET=asr docker compose up -d
+#
+# 注意:
+#   - 第一次构建会比较大(sentence-transformers 会拉 PyTorch CPU ~200MB)
+#   - 数据持久化在 ./backend/data(SQLite + Milvus Lite + 语料)
+#   - .env.docker 用于覆盖敏感配置(API Key 等);不会被提交进镜像
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: ${BACKEND_TARGET:-runtime}
+    image: upwatch-backend:${BACKEND_TARGET:-runtime}
+    container_name: upwatch-backend
+    restart: unless-stopped
+    # 后端只在内部网络被前端 nginx 访问,不直接暴露给宿主机
+    # 如需本地调试 API,把 8000:8000 注释打开
+    # ports:
+    #   - "127.0.0.1:8000:8000"
+    env_file:
+      - path: ./.env.docker
+        required: false
+    environment:
+      # 容器内数据目录
+      DATABASE_URL: sqlite:////app/data/upwatch.db
+      MILVUS_URI: /app/data/milvus/taoge.db
+      REVIEW_BASE_DIR: /app/data
+      RAGFLOW_CORPUS_DIR: /app/data/corpus
+      # 时区,跟随宿主机
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./backend/data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    networks:
+      - upwatch-net
+
+  frontend:
+    build:
+      context: ./frontend/app
+      dockerfile: Dockerfile
+    image: upwatch-frontend:latest
+    container_name: upwatch-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - upwatch-net
+
+networks:
+  upwatch-net:
+    driver: bridge
