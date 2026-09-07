@@ -34,7 +34,7 @@ B站官方字幕 / B站 AI 字幕 / Whisper 转写
     backend/app/rag/milvus_store.py  Embedding + Milvus 存储
               │
               ▼
-    Milvus Collection: taoge_review_chunks
+    Milvus Collection: upwatch_review_chunks
 ```
 
 说明：
@@ -98,10 +98,10 @@ RERANK_TOP_K=20
 
 # Milvus 向量库
 # 以 .db 结尾为 Milvus Lite 本地模式；否则按 host:port 连接服务器
-MILVUS_URI=./data/milvus/taoge.db
+MILVUS_URI=./data/milvus/upwatch.db
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
-MILVUS_COLLECTION=taoge_review_chunks
+MILVUS_COLLECTION=upwatch_review_chunks
 ```
 
 ## 5. API 清单

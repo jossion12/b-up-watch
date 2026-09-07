@@ -164,7 +164,7 @@ volumes:
 | 容器内路径 | 宿主路径 | 用途 |
 |------------|----------|------|
 | `/app/data/upwatch.db` | `./backend/data/upwatch.db` | SQLite 主库 |
-| `/app/data/milvus/taoge.db` | `./backend/data/milvus/taoge.db` | Milvus Lite 向量库 |
+| `/app/data/milvus/upwatch.db` | `./backend/data/milvus/upwatch.db` | Milvus Lite 向量库 |
 | `/app/data/corpus/` | `./backend/data/corpus/` | RAGFlow 语料输出 |
 | `./backend/data/<Uploader名>/` | 同左 | UP 复盘 Markdown |
 

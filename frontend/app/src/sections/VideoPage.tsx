@@ -17,7 +17,6 @@ import type { BackendVideoDetail, BackendTask } from '@/lib/api'
 interface Props {
   videos: Video[]
   uploaders: Uploader[]
-  onDownloadVideo: (id: string) => void
   // AI 总结功能已暂停
   onSummarized?: (id: string) => void
 }
@@ -61,7 +60,7 @@ function useTaskPoller(taskId: string | null, onSuccess: () => void, onFailed?: 
   }, [taskId])
 }
 
-export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo, onSummarized: _onSummarized }: Props) {
+export default function VideoPage({ videos: _videos, uploaders, onSummarized: _onSummarized }: Props) {
   const { id } = useParams()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
@@ -77,6 +76,7 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
   const [subtitleError, setSubtitleError] = useState<string | null>(null)
   // const [summaryError, setSummaryError] = useState<string | null>(null)
   const [prioritizeLoading, setPrioritizeLoading] = useState(false)
+  const [downloadLoading, setDownloadLoading] = useState(false)
 
   // const [summary, setSummary] = useState<VideoSummary | null>(null)
   const [subtitles, setSubtitles] = useState<SubtitleLine[]>([])
@@ -134,7 +134,6 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
     setSubtitleLoading(false)
     setSubtitleTaskId(null)
     fetchVideo()
-    if (id) onDownloadVideo(id)
   }, (t) => {
     setSubtitleLoading(false)
     setSubtitleTaskId(null)
@@ -202,6 +201,24 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
       toast.error(e?.error?.message || '优先排队失败')
     } finally {
       setPrioritizeLoading(false)
+    }
+  }
+
+  const handleDownloadWebm = async () => {
+    if (!id) return
+    setDownloadLoading(true)
+    try {
+      await videosApi.downloadWebm(id)
+    } catch (e: any) {
+      const code = e?.error?.code
+      const msg = e?.displayMessage || e?.error?.message || '下载失败'
+      if (code === 'SESSDATA_REQUIRED') {
+        toast.error(msg, { duration: 8000 })
+      } else {
+        toast.error(msg)
+      }
+    } finally {
+      setDownloadLoading(false)
     }
   }
 
@@ -335,6 +352,16 @@ export default function VideoPage({ videos: _videos, uploaders, onDownloadVideo,
               </Button>
             </>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            onClick={handleDownloadWebm}
+            disabled={downloadLoading}
+          >
+            {downloadLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            {downloadLoading ? '下载中...' : 'WebM'}
+          </Button>
           {/* AI 总结功能已暂停：隐藏生成按钮 */}
           {/* <Button onClick={handleSummarize} disabled={summaryLoading} className="gap-1.5">
             {summaryLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}

@@ -279,8 +279,8 @@ REVIEW_BASE_DIR=./data
 EMBEDDING_PROVIDER=sentence_transformers
 EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
 EMBEDDING_DIM=1024
-MILVUS_URI=./data/milvus/taoge.db
-MILVUS_COLLECTION=taoge_review_chunks
+MILVUS_URI=./data/milvus/upwatch.db
+MILVUS_COLLECTION=upwatch_review_chunks
 
 # 数据库
 DATABASE_URL=sqlite:///./data/upwatch.db
@@ -1276,7 +1276,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 backend/data/
 ├── upwatch.db              # SQLite 数据库
 ├── milvus/
-│   └── taoge.db            # Milvus Lite 向量库
+│   └── upwatch.db          # Milvus Lite 向量库
 └── {up主名称}/
     └── YYYYMMDD-{标题}.md  # 字幕 Markdown 归档
 ```

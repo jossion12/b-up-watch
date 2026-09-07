@@ -180,6 +180,7 @@ def _transcribe_video_sync(bvid: str) -> list[dict]:
             work,
             cookiefile=str(cookie_file) if cookie_file else None,
             user_agent=settings.bilibili_user_agent or None,
+            sessdata=sessdata or None,
         )
         log.info("[ASR download] bvid=%s, audio=%s, size=%d bytes, elapsed=%.2fs", bvid, audio, audio.stat().st_size, time.monotonic() - t0)
 

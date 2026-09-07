@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from datetime import datetime, timezone
@@ -27,7 +28,32 @@ from app.schemas import (
     SystemStatusStorage,
 )
 
+log = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _extract_sessdata_from_cookie(cookie: str | None) -> str | None:
+    """从 B 站完整 Cookie 字符串中提取 SESSDATA 值。
+
+    支持浏览器 DevTools 复制的标准格式 "name1=value1; name2=value2"；
+    也容忍 DevTools Network > Request Headers > Cookie 行（可能带 "cookie:" 前缀、
+    含换行）。大小写不敏感、容忍前后空白；首个非空 SESSDATA 胜出。
+    """
+    if not cookie:
+        return None
+    # 剥掉 DevTools Network 复制可能带的 "cookie:" 前缀
+    cookie = cookie.strip()
+    if cookie.lower().startswith("cookie:"):
+        cookie = cookie[len("cookie:"):].strip()
+    # 兼容多行（DevTools 复制请求头时偶尔带换行）
+    cookie = " ".join(cookie.splitlines())
+    for part in cookie.split(";"):
+        name, sep, value = part.strip().partition("=")
+        if name.lower() == "sessdata" and sep and value:
+            # 剥掉外层引号（DevTools 偶尔会带）
+            return value.strip().strip('"').strip("'")
+    return None
 
 
 @router.get("/system/status", response_model=SystemStatusOut)
@@ -107,9 +133,29 @@ def update_system_config(
     if payload.bilibili_sessdata is not None:
         cfg.bilibili_sessdata = payload.bilibili_sessdata or None
         set_bilibili_sessdata(cfg.bilibili_sessdata)
+        # 脱敏日志：确认设置页的保存请求真的把值传过来了
+        v = cfg.bilibili_sessdata or ""
+        masked = (v[:4] + "***" + v[-3:]) if len(v) > 8 else repr(v)
+        log.info(
+            "[system.config] bilibili_sessdata saved: len=%d value=%s",
+            len(v), masked,
+        )
     if payload.bilibili_cookie is not None:
         cfg.bilibili_cookie = payload.bilibili_cookie or None
         set_bilibili_cookie(cfg.bilibili_cookie)
+        # 自动从 Cookie 中提取 SESSDATA，避免用户单独粘贴
+        extracted = _extract_sessdata_from_cookie(cfg.bilibili_cookie)
+        cfg.bilibili_sessdata = extracted
+        set_bilibili_sessdata(extracted)
+        if extracted:
+            log.info(
+                "[system.config] SESSDATA auto-extracted from cookie: len=%d",
+                len(extracted),
+            )
+        else:
+            log.warning(
+                "[system.config] cookie 中未找到 SESSDATA；B 站风控拦截可能导致下载失败"
+            )
     if payload.ragflow_embed_auth is not None:
         cfg.ragflow_embed_auth = payload.ragflow_embed_auth or None
         set_ragflow_embed_auth(cfg.ragflow_embed_auth)

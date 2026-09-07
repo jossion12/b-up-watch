@@ -1,23 +1,31 @@
-"""视频相关：3.2.1 时间线、3.2.3 手动刷新、视频搜索。"""
+"""视频相关：3.2.1 时间线、3.2.3 手动刷新、视频搜索、视频下载。"""
 
 from __future__ import annotations
 
 import logging
+import re
+import shutil
+import tempfile
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 import httpx
 
 from app.bilibili import search as bili_search
 from app.bilibili import subtitle as bili_sub
+from app.config import _live_bilibili_sessdata, get_bilibili_cookie, get_bilibili_sessdata, get_settings
 from app.db import get_db
 from app.errors import BizError
-from app.models import DEFAULT_USER_ID, Task, Uploader, Video
+from app.models import DEFAULT_USER_ID, SystemConfig, Task, Uploader, Video
 from app.tasks.service import create_task
+from app.transcriber.audio_fetcher import download_bilibili_video
 from app.websocket import push_uploader_unread_sync
 from app.schemas import (
     BackfillLikesIn,
@@ -37,6 +45,34 @@ from app.schemas import (
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ---------- 文件名清洗（视频下载用） ----------
+
+_INVALID_FN_CHARS = re.compile(r'[\\/:*?"<>|\r\n\t]')
+_CTRL_CHARS = re.compile(r'[\x00-\x1f\x7f]')
+
+
+def sanitize_filename(
+    title: str | None,
+    fallback: str,
+    max_length: int = 150,
+) -> str:
+    """把视频标题清洗成可作为文件名的字符串。
+
+    - 删除控制字符（\\x00-\\x1f \\x7f）
+    - 把 Windows / 类 Unix 文件系统非法字符（\\\\ / : * ? " < > | \\r \\n \\t）替换为 _
+    - 去掉首尾的空格与 . _（Windows 不允许以 . 结尾）
+    - 超过 max_length 时截断并再次清理末尾
+    - 若清洗后为空则返回 fallback（通常是 bvid）
+    """
+    s = _CTRL_CHARS.sub("", title or "")
+    s = _INVALID_FN_CHARS.sub("_", s).strip(" ._")
+    if not s:
+        return fallback
+    if len(s) > max_length:
+        s = s[:max_length].rstrip(" ._")
+    return s
 
 
 def _parse_date(s: str) -> datetime:
@@ -443,3 +479,182 @@ def mark_videos_read(
 
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------- 视频下载（WebM） ----------
+
+
+def _cleanup_tmp(tmp_dir: Path) -> None:
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _parse_cookie_pairs(cookie: str | None) -> list[tuple[str, str]]:
+    """把 B 站 Cookie 字符串解析为 [(name, value), ...]。
+
+    支持浏览器 DevTools 复制的标准格式 "name1=value1; name2=value2"；
+    也容忍 DevTools Network > Request Headers > Cookie 行（可能带 "cookie:" 前缀、
+    含换行）。大小写敏感（保留原 key 名）；空值、被剥掉引号后为空的值都丢弃。
+    """
+    if not cookie:
+        return []
+    cookie = cookie.strip()
+    if cookie.lower().startswith("cookie:"):
+        cookie = cookie[len("cookie:"):].strip()
+    cookie = " ".join(cookie.splitlines())
+    pairs: list[tuple[str, str]] = []
+    for part in cookie.split(";"):
+        name, sep, value = part.strip().partition("=")
+        if not sep:
+            continue
+        # 剥掉外层引号（DevTools 偶尔会带）
+        value = value.strip().strip('"').strip("'")
+        if name and value:
+            pairs.append((name, value))
+    return pairs
+
+
+def _prepare_bilibili_cookiefile(work_dir: Path, cookie: str | None = None) -> Optional[Path]:
+    """把当前 B 站 Cookie 写成 yt-dlp 可用的 Netscape cookie 文件。
+
+    优先使用完整 Cookie（多字段：SESSDATA / bili_jct / DedeUserID / buvid3/4 等），
+    否则回退到当前 SESSDATA（保证旧调用路径仍能工作）。
+    没有登录态时返回 None，调用方按匿名模式继续（仅能拿到公开画质）。
+    """
+    cookie_str = (cookie or get_bilibili_cookie() or get_bilibili_sessdata() or "").strip()
+    if not cookie_str:
+        return None
+
+    pairs = _parse_cookie_pairs(cookie_str)
+    if not pairs:
+        # 解析不出任何 key=value（极端情况：用户只填了 SESSDATA 一行无 ;）
+        # 退化为单字段写入，避免 yt-dlp 拿到空 cookie 文件
+        sessdata = cookie_str
+        pairs = [("SESSDATA", sessdata)]
+
+    lines = ["# Netscape HTTP Cookie File"]
+    for name, value in pairs:
+        # Netscape format: domain \t flag \t path \t secure \t expiration \t name \t value
+        lines.append(f".bilibili.com\tTRUE\t/\tFALSE\t0\t{name}\t{value}")
+    cookie_file = work_dir / "bilibili_cookies.txt"
+    cookie_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return cookie_file
+
+
+def _current_sessdata() -> Optional[str]:
+    """获取当前生效的 B 站 SESSDATA；空字符串视为未登录。"""
+    sessdata = get_bilibili_sessdata()
+    return sessdata or None
+
+
+@router.get("/videos/{video_id}/video/download")
+def download_video_endpoint(
+    video_id: str,
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """下载指定视频为 ≤720p 的 WebM 文件，文件名按视频标题命名。
+
+    同步流式：yt-dlp 把视频拉到临时目录，通过 FileResponse sendfile 回客户端；
+    下载完成后由 BackgroundTask 清理临时目录。
+
+    注意：B 站风控对 datacenter IP + 匿名请求一律返回 412，
+    调用前必须确保已配置 B 站 SESSDATA（设置页或 .env）。
+    """
+    v = db.get(Video, video_id)
+    if v is None or v.user_id != DEFAULT_USER_ID:
+        raise BizError("VIDEO_NOT_FOUND", "视频不存在", http_status=404)
+
+    sessdata = _current_sessdata()
+    if not sessdata:
+        # 详细诊断：分别看 DB / 内存缓存 / .env 三处来源的实际值（脱敏）。
+        # 注意：不要在函数体内再次 import 同名符号——会让 Python 把名字当成
+        # 函数级局部变量，遮蔽模块级导入，导致 success 分支访问时报 UnboundLocalError。
+        cfg_row = db.get(SystemConfig, 1)
+        db_sess = (cfg_row.bilibili_sessdata if cfg_row else None) or ""
+        live_sess = _live_bilibili_sessdata or ""
+        env_sess = get_settings().bilibili_sessdata or ""
+
+        def _mask(s: str) -> str:
+            return (s[:4] + "***" + s[-3:]) if len(s) > 8 else repr(s)
+
+        log.warning(
+            "[video download] bvid=%s rejected: SESSDATA empty. "
+            "sources: db=%s live_cache=%s env=%s "
+            "请在「设置」页填入 SESSDATA（保存后无需重启——PATCH 接口会更新 live_cache）",
+            v.bvid,
+            _mask(db_sess), _mask(live_sess), _mask(env_sess),
+        )
+        raise BizError(
+            "SESSDATA_REQUIRED",
+            "下载视频需要先登录 B 站：请在「设置」页填入 SESSDATA 后重试。"
+            "未登录时 B 站风控会对服务器 IP 直接返回 412。",
+            http_status=400,
+        )
+
+    settings = get_settings()
+    # 取完整 Cookie（多字段）优先于单字段 SESSDATA；为空时退回 SESSDATA
+    full_cookie = (get_bilibili_cookie() or "").strip()
+    tmp_dir = Path(tempfile.mkdtemp(prefix="b-up-watch-video-"))
+    try:
+        cookie_file = _prepare_bilibili_cookiefile(tmp_dir, cookie=full_cookie or None)
+        # DEBUG: 打印 cookies + sessdata，便于排查 412 风控问题
+        if cookie_file is not None:
+            log.info(
+                "[video download] DEBUG cookies file path=%s content:\n%s",
+                cookie_file,
+                cookie_file.read_text(encoding="utf-8"),
+            )
+        else:
+            log.warning("[video download] DEBUG cookies file: NOT CREATED (no sessdata)")
+        log.info(
+            "[video download] DEBUG sessdata value=%r (len=%d) full_cookie_present=%s",
+            sessdata,
+            len(sessdata) if sessdata else 0,
+            bool(full_cookie),
+        )
+        log.info(
+            "[video download] DEBUG user_agent=%r cookiefile=%s",
+            settings.bilibili_user_agent or None,
+            str(cookie_file) if cookie_file else None,
+        )
+        video_path = download_bilibili_video(
+            v.bvid,
+            tmp_dir,
+            cookiefile=str(cookie_file) if cookie_file else None,
+            user_agent=settings.bilibili_user_agent or None,
+            sessdata=sessdata,
+            cookie=full_cookie or None,
+            max_height=720,
+        )
+        # 文件名与 Content-Type 跟实际容器走：B 站极少提供 WebM，
+        # 实际大概率是 MP4；避免「MP4 内容叫 .webm」的错位假文件
+        ext = video_path.suffix.lstrip(".") or "mp4"
+        filename = sanitize_filename(v.title, fallback=v.bvid)
+        log.info(
+            "[video download] video_id=%s bvid=%s file=%s ext=%s size=%d",
+            v.id, v.bvid, video_path.name, ext, video_path.stat().st_size,
+        )
+        return FileResponse(
+            path=video_path,
+            media_type=f"video/{ext}",
+            filename=f"{filename}.{ext}",
+            background=BackgroundTask(_cleanup_tmp, tmp_dir),
+        )
+    except BizError:
+        _cleanup_tmp(tmp_dir)
+        raise
+    except Exception as e:
+        _cleanup_tmp(tmp_dir)
+        log.exception("[video download] failed: bvid=%s", v.bvid)
+        # yt-dlp 错误信息通常带 ANSI 颜色码（\x1b[...m），剥掉避免终端渲染
+        msg = str(e).replace("\x1b[0;31m", "").replace("\x1b[0m", "")
+        # 截断过长的 yt-dlp 错误信息
+        if len(msg) > 400:
+            msg = msg[:400] + "..."
+        hint = ""
+        if "412" in msg or "Precondition" in msg:
+            hint = "（常见原因：B 站风控拦截。检查 SESSDATA 是否有效，或尝试更换网络/代理）"
+        raise BizError(
+            "VIDEO_DOWNLOAD_FAILED",
+            f"视频下载失败: {msg}{hint}",
+            http_status=502,
+        ) from e

@@ -38,7 +38,7 @@ services:
     environment:
       # 容器内数据目录
       DATABASE_URL: sqlite:////app/data/upwatch.db
-      MILVUS_URI: /app/data/milvus/taoge.db
+      MILVUS_URI: /app/data/milvus/upwatch.db
       REVIEW_BASE_DIR: /app/data
       RAGFLOW_CORPUS_DIR: /app/data/corpus
       # 时区,跟随宿主机

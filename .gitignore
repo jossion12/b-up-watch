@@ -19,3 +19,9 @@ yarn-error.log*
 .env.*
 !.env.example
 !.env.docker.example
+
+# Runtime data (databases, corpus, archives)
+data/
+
+# Private npm registry config (keep local only)
+frontend/app/.npmrc

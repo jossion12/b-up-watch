@@ -16,11 +16,45 @@ class AudioUnavailableError(RuntimeError):
     """视频没有可识别音轨或无法下载音频，后续无需重试。"""
 
 
+def _bilibili_http_headers(
+    user_agent: str | None,
+    sessdata: str | None,
+    cookie: str | None = None,
+) -> dict[str, str]:
+    """构造 yt-dlp 访问 B站所需的浏览器态 HTTP 头。
+
+    B站风控对裸请求返回 412 Precondition Failed：
+    - 缺少 Referer：playurl 接口拒绝
+    - 缺少 Origin：部分接口拒绝
+    - 缺少 Accept-Language：浏览器指纹不完整
+    - 仅靠 cookiefile 而不直接传 Cookie：部分请求路径拿不到登录态
+    - 仅靠 SESSDATA 单字段不够：风控还需要 bili_jct / DedeUserID / buvid3/4 等
+
+    因此登录态必须同时通过 cookiefile 与 Cookie header 双重注入，且 Cookie
+    header 应携带完整字段（而非只塞 SESSDATA=xxx）。
+    """
+    headers: dict[str, str] = {
+        "Referer": "https://www.bilibili.com/",
+        "Origin": "https://www.bilibili.com",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    if user_agent:
+        headers["User-Agent"] = user_agent
+    # 优先完整 Cookie（多字段）；退化路径：sessdata 单字段
+    if cookie:
+        headers["Cookie"] = cookie
+    elif sessdata:
+        headers["Cookie"] = f"SESSDATA={sessdata}"
+    return headers
+
+
 def download_bilibili_audio(
     bvid: str,
     out_dir: Path,
     cookiefile: str | None = None,
     user_agent: str | None = None,
+    sessdata: str | None = None,
+    cookie: str | None = None,
 ) -> Path:
     """下载 B站视频音轨到 out_dir，返回媒体文件路径。
 
@@ -29,6 +63,8 @@ def download_bilibili_audio(
         out_dir: 临时输出目录（调用方负责清理）
         cookiefile: 可选 yt-dlp 格式 cookie 文件路径（用于登录态）
         user_agent: 可选自定义 User-Agent
+        sessdata: 可选 B 站 SESSDATA，会作为 Cookie header 直接传给 yt-dlp
+        cookie: 可选 B 站完整 Cookie 字符串（多字段），优先于 sessdata
 
     Raises:
         RuntimeError: yt-dlp 不可用或下载失败
@@ -50,14 +86,10 @@ def download_bilibili_audio(
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
+        "http_headers": _bilibili_http_headers(user_agent, sessdata, cookie),
     }
     if cookiefile:
         ydl_opts["cookiefile"] = cookiefile
-    if user_agent:
-        ydl_opts["http_headers"] = {
-            "User-Agent": user_agent,
-            "Referer": "https://www.bilibili.com/",
-        }
 
     url = f"https://www.bilibili.com/video/{bvid}"
     log.info("yt-dlp download audio: bvid=%s", bvid)
@@ -69,6 +101,72 @@ def download_bilibili_audio(
                 f"yt-dlp 下载的文件没有可识别音轨，无法转写: {bvid} ({audio_path.name})"
             )
         return audio_path
+
+
+def download_bilibili_video(
+    bvid: str,
+    out_dir: Path,
+    cookiefile: str | None = None,
+    user_agent: str | None = None,
+    sessdata: str | None = None,
+    cookie: str | None = None,
+    max_height: int = 720,
+) -> Path:
+    """下载 B站视频为 ≤max_height 的 WebM 文件，返回媒体文件路径。
+
+    format 选择器优先 WebM 视频 + WebM 音频，merge_output_format=webm
+    保证双流合并后也是 WebM 容器。失败时逐级降级：合并 WebM → 单文件 WebM →
+    任意 ≤max_height 的格式（仍受 merge_output_format 控制，最终落为 WebM）。
+
+    Args:
+        bvid: B站视频 BV 号
+        out_dir: 临时输出目录（调用方负责清理）
+        cookiefile: 可选 yt-dlp 格式 cookie 文件路径（用于登录态）
+        user_agent: 可选自定义 User-Agent
+        sessdata: 可选 B 站 SESSDATA，会作为 Cookie header 直接传给 yt-dlp
+        cookie: 可选 B 站完整 Cookie 字符串（多字段），优先于 sessdata
+        max_height: 最大分辨率上限（像素）
+
+    Raises:
+        RuntimeError: yt-dlp 不可用或下载失败
+    """
+    try:
+        import yt_dlp  # 延迟导入
+    except ImportError as e:
+        raise RuntimeError("yt-dlp 未安装，请 pip install yt-dlp") from e
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # B 站绝大多数视频不提供 webm 流。优先级：
+    # 1. H.265/HEVC (vcodec=hvc1) —— 同画质体积比 H.264 小 30-50%（B 站同时提供）
+    # 2. WebM（极少数视频有；体积可能更小，但兼容性比 MP4 差）
+    # 3. 任意 ≤max_height 视频+音频（兜底，确保能下载）
+    # 容器由 yt-dlp 决定（保留原始 ext），调用方按 .suffix 设置 Content-Type。
+    format_selector = (
+        f"bestvideo[vcodec^=hvc1][height<={max_height}]+bestaudio"
+        f"/bestvideo[vcodec^=hev1][height<={max_height}]+bestaudio"
+        f"/bestvideo[ext=webm][height<={max_height}]+bestaudio"
+        f"/bestvideo[height<={max_height}]+bestaudio"
+        f"/best[height<={max_height}]"
+    )
+
+    ydl_opts: dict = {
+        "format": format_selector,
+        "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "noplaylist": True,
+        "http_headers": _bilibili_http_headers(user_agent, sessdata, cookie),
+    }
+    if cookiefile:
+        ydl_opts["cookiefile"] = cookiefile
+
+    url = f"https://www.bilibili.com/video/{bvid}"
+    log.info("yt-dlp download video: bvid=%s, max_height=%d", bvid, max_height)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return _resolve_downloaded_audio(info, out_dir, bvid)
 
 
 def _has_audio_stream(path: Path) -> bool:

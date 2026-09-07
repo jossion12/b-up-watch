@@ -150,12 +150,12 @@ class Settings(BaseSettings):
     rerank_top_k: int = 20
 
     # Milvus 向量库
-    # 如果设置 milvus_uri（如 ./data/milvus/taoge.db），则优先使用 Milvus Lite 本地模式；
+    # 如果设置 milvus_uri（如 ./data/milvus/upwatch.db），则优先使用 Milvus Lite 本地模式；
     # 否则连接 milvus_host:milvus_port 的服务器模式。
-    milvus_uri: str = "./data/milvus/taoge.db"
+    milvus_uri: str = "./data/milvus/upwatch.db"
     milvus_host: str = "localhost"
     milvus_port: int = 19530
-    milvus_collection: str = "taoge_review_chunks"
+    milvus_collection: str = "upwatch_review_chunks"
 
 
 @lru_cache

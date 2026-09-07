@@ -119,3 +119,47 @@ def test_clear_system_config_bilibili_sessdata(client):
     r = client.patch("/api/v1/system/config", json={"bilibili_sessdata": ""})
     assert r.status_code == 200, r.text
     assert r.json()["bilibili_sessdata"] is None
+
+
+def test_cookie_auto_extracts_sessdata(client):
+    """PATCH 只传 cookie 时，必须自动从 cookie 提取 SESSDATA 写入 sessdata 字段。"""
+    real = (
+        "buvid3=ABC; buvid4=XYZ; "
+        "SESSDATA=11abc%2C22def; "
+        "bili_jct=ccc; DedeUserID=12345"
+    )
+    r = client.patch("/api/v1/system/config", json={"bilibili_cookie": real})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["bilibili_cookie"] == real
+    assert body["bilibili_sessdata"] == "11abc%2C22def"
+
+
+def test_cookie_clear_also_clears_sessdata(client):
+    """清空 cookie 时，之前从 cookie 提取的 sessdata 也必须清空。"""
+    client.patch(
+        "/api/v1/system/config",
+        json={"bilibili_cookie": "SESSDATA=keepme"},
+    )
+    r = client.patch("/api/v1/system/config", json={"bilibili_cookie": ""})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["bilibili_cookie"] is None
+    assert body["bilibili_sessdata"] is None
+
+
+def test_cookie_without_sessdata_leaves_sessdata_none(client):
+    """cookie 里没有 SESSDATA 时，sessdata 字段必须保持 None，并被存到 db。"""
+    r = client.patch(
+        "/api/v1/system/config",
+        json={"bilibili_cookie": "buvid3=foo; buvid4=bar"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["bilibili_cookie"] == "buvid3=foo; buvid4=bar"
+    assert body["bilibili_sessdata"] is None
+
+    # 再次 GET 验证真的存进去了
+    r = client.get("/api/v1/system/config")
+    assert r.json()["bilibili_cookie"] == "buvid3=foo; buvid4=bar"
+    assert r.json()["bilibili_sessdata"] is None

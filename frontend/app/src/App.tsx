@@ -208,10 +208,6 @@ export default function App() {
     navigate(`/video/${v.id}`)
   }
 
-  const handleDownloadVideo = (id: string) => {
-    setVideos((prev) => prev.map((v) => (v.id === id && v.status === 'new' ? { ...v, status: 'downloaded' } : v)))
-  }
-
   // AI 总结功能已暂停
   // const handleSummarized = (id: string) => {
   //   setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, status: 'summarized' } : v)))
@@ -409,7 +405,6 @@ export default function App() {
           <VideoPage
             videos={videos}
             uploaders={uploaders}
-            onDownloadVideo={handleDownloadVideo}
           />
         }
       />

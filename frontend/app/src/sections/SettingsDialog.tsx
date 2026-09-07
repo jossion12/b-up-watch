@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Save, Settings } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -11,7 +12,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { systemApi, type SystemConfig, type SystemStatus } from '@/lib/api'
@@ -32,7 +32,6 @@ export default function SettingsDialog({ open: controlledOpen, onOpenChange }: S
   const [saving, setSaving] = useState(false)
   const [config, setConfig] = useState<SystemConfig | null>(null)
   const [status, setStatus] = useState<SystemStatus | null>(null)
-  const [sessdata, setSessdata] = useState('')
   const [cookie, setCookie] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -44,7 +43,6 @@ export default function SettingsDialog({ open: controlledOpen, onOpenChange }: S
       .then(([cfg, s]) => {
         setConfig(cfg)
         setStatus(s)
-        setSessdata(cfg.bilibili_sessdata || '')
         setCookie(cfg.bilibili_cookie || '')
       })
       .catch((e: any) => {
@@ -58,15 +56,28 @@ export default function SettingsDialog({ open: controlledOpen, onOpenChange }: S
     setError(null)
     try {
       const updated = await systemApi.updateConfig({
-        bilibili_sessdata: sessdata,
         bilibili_cookie: cookie,
       })
       setConfig(updated)
-      setSessdata(updated.bilibili_sessdata || '')
       setCookie(updated.bilibili_cookie || '')
+      const sessLen = (updated.bilibili_sessdata || '').length
+      const cookieLen = (updated.bilibili_cookie || '').length
+      if (cookieLen === 0) {
+        toast.success('已保存（已清除 Cookie / SESSDATA）')
+      } else if (sessLen === 0) {
+        toast.error(
+          `Cookie 中未找到 SESSDATA！请确认你已登录 B 站，并复制登录态 cookie（包含 SESSDATA / bili_jct / DedeUserID），而不是浏览器的匿名追踪 cookie（buvid3/buvid4/_uuid）。`,
+          { duration: 12000 },
+        )
+      } else {
+        toast.success(
+          `已保存：SESSDATA 已从 Cookie 自动提取（${sessLen} 字符）`
+        )
+      }
       setOpen(false)
     } catch (e: any) {
       setError(e?.error?.message || '保存失败')
+      toast.error(e?.error?.message || '保存失败')
     } finally {
       setSaving(false)
     }
@@ -95,29 +106,24 @@ export default function SettingsDialog({ open: controlledOpen, onOpenChange }: S
         ) : (
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="bilibili-sessdata">B站 SESSDATA</Label>
-              <Input
-                id="bilibili-sessdata"
-                value={sessdata}
-                onChange={(e) => setSessdata(e.target.value)}
-                placeholder="从浏览器 Cookie 中复制 SESSDATA 值"
-              />
-              <p className="text-xs text-muted-foreground">
-                留空表示不使用登录态。若已填写完整 Cookie，此项可留空。
-              </p>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="bilibili-cookie">B站完整 Cookie（可选）</Label>
+              <Label htmlFor="bilibili-cookie">B站 Cookie</Label>
               <Textarea
                 id="bilibili-cookie"
                 value={cookie}
                 onChange={(e) => setCookie(e.target.value)}
-                placeholder="从浏览器开发者工具复制 bilibili.com 下的完整 Cookie 字符串"
-                rows={4}
+                placeholder="SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx; buvid3=xxx; buvid4=xxx; ..."
+                rows={6}
               />
               <p className="text-xs text-muted-foreground">
-                包含 SESSDATA、buvid3、buvid4 等指纹 Cookie，可显著降低 412 风控概率。修改后即时生效。
+                <strong>必须包含 SESSDATA</strong>（登录态凭证）。获取方式：
+                <br />
+                1. 浏览器登录 <a href="https://www.bilibili.com" target="_blank" rel="noreferrer" className="underline">bilibili.com</a>
+                <br />
+                2. F12 → Application → Cookies → 选 https://www.bilibili.com
+                <br />
+                3. 找到 SESSDATA / bili_jct / DedeUserID 这一组（注意 ⚠️ 不要只复制 buvid3/buvid4 等匿名追踪字段）
+                <br />
+                4. 在 Console 跑 <code className="px-1 bg-muted rounded">document.cookie</code> 一键复制所有 cookie
               </p>
             </div>
 

@@ -208,6 +208,35 @@ export const videosApi = {
       method: 'POST',
       body: JSON.stringify({ items }),
     }),
+  downloadWebm: async (videoId: string) => {
+    // 用 fetch + blob 而不是 window.open，以便捕获后端结构化错误并提示用户
+    // （如 SESSDATA_REQUIRED / 412 风控拦截），而不是让浏览器弹一个空白错误页
+    const res = await fetch(`${API_BASE}/videos/${videoId}/video/download`)
+    if (!res.ok) {
+      let err: any = { status: res.status, message: res.statusText }
+      try {
+        err = await res.json()
+      } catch {
+        // 非 JSON 错误（如网关超时）
+      }
+      const detail = err?.error?.message || err?.message || `HTTP ${res.status}`
+      throw { ...err, status: res.status, displayMessage: detail }
+    }
+    // 从响应头 Content-Disposition 里取文件名
+    const disp = res.headers.get('Content-Disposition') || ''
+    const m = /filename\*?=(?:UTF-8'')?["']?([^"';]+)/i.exec(disp)
+    const filename = m ? decodeURIComponent(m[1]) : `${videoId}.webm`
+
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  },
 }
 
 // ---------- 字幕 ----------
